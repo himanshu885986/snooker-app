@@ -1,0 +1,57 @@
+@import "tailwindcss";
+@import "@fontsource-variable/plus-jakarta-sans";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Table cloth green */
+  --color-felt-50: #edf8f1;
+  --color-felt-100: #d3eedd;
+  --color-felt-200: #a9dcbe;
+  --color-felt-300: #74c296;
+  --color-felt-400: #43a36f;
+  --color-felt-500: #238653;
+  --color-felt-600: #166b41;
+  --color-felt-700: #125536;
+  --color-felt-800: #0f442c;
+  --color-felt-900: #0c3824;
+  --color-felt-950: #061f14;
+
+  /* Brass fittings / money */
+  --color-brass-100: #fbf1d9;
+  --color-brass-200: #f5e0ae;
+  --color-brass-300: #eecb7c;
+  --color-brass-400: #e6b456;
+  --color-brass-500: #d99a35;
+  --color-brass-600: #bb7a28;
+  --color-brass-700: #9b5d23;
+
+  /* Page background */
+  --color-chalk: #f6f4ee;
+}
+
+body {
+  background: var(--color-chalk);
+  color: var(--color-stone-900);
+  -webkit-tap-highlight-color: transparent;
+  font-feature-settings: "cv11";
+}
+
+/* A lit snooker table: felt with a soft lamp glow. */
+.felt {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgb(255 255 255 / 0.10), transparent 60%),
+    linear-gradient(160deg, var(--color-felt-700), var(--color-felt-900) 70%, var(--color-felt-950));
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+.rise { animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise { animation: none; }
+}
