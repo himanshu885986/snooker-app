@@ -13,6 +13,7 @@ Table timers, per-player billing and shop sales for snooker parlours. It is a we
 
 All money is stored in paise (whole numbers), so rounding errors can't happen. Split shares always add up exactly to the frame total.
 
+
 ## Run it on your computer
 
 ```bash
