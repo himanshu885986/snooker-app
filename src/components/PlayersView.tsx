@@ -1,13 +1,38 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { useCounter } from '../counter'
-import { formatRupees, upiLink, visitTotals } from '../lib/billing'
+import { formatRupees, parseRupees, upiLink, visitTotals } from '../lib/billing'
+import { normalizePhone } from '../lib/permissions'
 import { foodImageUrl, productImageId } from '../lib/foodImages'
 import type { Charge, OpenVisit, PaymentMode } from '../data/types'
+import { HistoryView } from './HistoryView'
 import { Icon } from './icons'
+import { PhoneInput } from './Login'
+import { AmountInput, formatTime, MoneyBadge, ModePicker } from './money'
 import { Avatar, Button, Input, Modal } from './ui'
 
 export function PlayersView() {
+  const { can } = useCounter()
+  const [view, setView] = useState<'open' | 'history'>('open')
+
+  return (
+    <div className="mx-auto max-w-4xl p-3 sm:p-4">
+      {can('collect') && (
+        <div className="mb-4 grid grid-cols-2 gap-1 rounded-2xl bg-stone-900/5 p-1 text-sm font-bold">
+          {([['open', 'Open bills', 'receipt'], ['history', 'History', 'history']] as const).map(([id, label, icon]) => (
+            <button key={id} onClick={() => setView(id)}
+              className={`flex items-center justify-center gap-2 rounded-xl py-2.5 transition ${view === id ? 'bg-white text-felt-900 shadow-sm' : 'text-stone-500'}`}>
+              <Icon name={icon} className="h-4 w-4" /> {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {view === 'history' && can('collect') ? <HistoryView /> : <OpenBills />}
+    </div>
+  )
+}
+
+function OpenBills() {
   const { state, can } = useCounter()
   const [openId, setOpenId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -16,7 +41,7 @@ export function PlayersView() {
   const total = state.openVisits.reduce((sum, v) => sum + visitTotals(v).due, 0)
 
   return (
-    <div className="mx-auto max-w-4xl p-3 sm:p-4">
+    <div>
       <div className="mb-4 flex items-center justify-between gap-3 rounded-3xl bg-felt-900 p-4 text-white shadow-lg shadow-felt-950/10">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-white/60">To collect</p>
@@ -52,7 +77,10 @@ export function PlayersView() {
                       : `${frames} lost ${frames === 1 ? 'frame' : 'frames'} · ${items} ${items === 1 ? 'item' : 'items'}`}
                   </span>
                 </span>
-                <span className="tabular text-lg font-extrabold">{formatRupees(visitTotals(v).due)}</span>
+                <span className="text-right">
+                  <span className="tabular block text-lg font-extrabold">{formatRupees(visitTotals(v).due)}</span>
+                  {visitTotals(v).paid > 0 && <span className="block text-[11px] font-semibold text-felt-600">{formatRupees(visitTotals(v).paid)} paid</span>}
+                </span>
               </button>
             </li>
           )
@@ -107,9 +135,11 @@ function BillDialog({ visitId, onClose }: { visitId: string; onClose: () => void
 
 function BillBody({ visit, onClose }: { visit: OpenVisit; onClose: () => void }) {
   const { store, state, run, busy, can } = useCounter()
-  const [view, setView] = useState<'bill' | 'items' | 'upi' | 'cash'>('bill')
+  const [view, setView] = useState<'bill' | 'items' | 'upi' | 'cash' | 'part' | 'khata'>('bill')
   const { charged, paid, due } = visitTotals(visit)
   const playing = state.activeFrames.some((f) => f.players.some((p) => p.visit_id === visit.id))
+  const khataDue = visit.customer_id ? state.khata.find((c) => c.id === visit.customer_id)?.balance_paise ?? 0 : 0
+  const payments = visit.payments.filter((p) => !p.voided_at)
 
   const checkout = async (mode: PaymentMode) => { if (await run(() => store.checkout(visit.id, mode))) onClose() }
 
@@ -138,6 +168,14 @@ function BillBody({ visit, onClose }: { visit: OpenVisit; onClose: () => void })
         </div>
       </Modal>
     )
+  }
+
+  if (view === 'part') {
+    return <PartPayment visit={visit} due={due} onBack={() => setView('bill')} />
+  }
+
+  if (view === 'khata') {
+    return <PutOnKhata visit={visit} due={due} onBack={() => setView('bill')} onDone={onClose} />
   }
 
   if (view === 'upi') {
@@ -184,11 +222,43 @@ function BillBody({ visit, onClose }: { visit: OpenVisit; onClose: () => void })
             ))}
           </ul>
         )}
+        {paid > 0 && (
+          <>
+            <div className="mt-2 flex justify-between border-t border-stone-200 pt-2 text-sm">
+              <span className="text-stone-500">Bill total</span><b className="tabular">{formatRupees(charged)}</b>
+            </div>
+            <ul className="text-sm">
+              {payments.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-2 py-1">
+                  <span className="flex items-center gap-2 text-felt-700">
+                    <MoneyBadge kind={p.mode}>{p.mode === 'cash' ? 'Cash' : 'UPI'}</MoneyBadge> paid at {formatTime(p.created_at)}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <b className="tabular text-felt-700">−{formatRupees(p.amount_paise)}</b>
+                    {can('collect') && (
+                      <button disabled={busy} onClick={() => run(() => store.voidPayment(p.id))}
+                        className="rounded-full p-1 text-stone-400 hover:bg-red-50 hover:text-red-700" title="Remove (recorded by mistake)" aria-label="Remove payment">
+                        <Icon name="x" className="h-4 w-4" />
+                      </button>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         <div className="mt-2 flex items-baseline justify-between border-t-2 border-stone-900 pt-3">
-          <span className="font-bold">Total{paid > 0 ? <span className="font-normal text-stone-500"> (paid {formatRupees(paid)} of {formatRupees(charged)})</span> : ''}</span>
+          <span className="font-bold">{paid > 0 ? 'Left to pay' : 'Total'}</span>
           <span className="tabular text-3xl font-extrabold">{formatRupees(due)}</span>
         </div>
       </div>
+
+      {can('collect') && khataDue > 0 && (
+        <p className="mb-3 flex items-center gap-2 rounded-2xl bg-rose-50 p-3 text-sm text-rose-900 ring-1 ring-rose-200">
+          <Icon name="book" className="h-4 w-4 shrink-0" />
+          <span>{visit.player_name} already owes <b>{formatRupees(khataDue)}</b> on khata. Collect it in the Khata tab.</span>
+        </p>
+      )}
 
       {can('operate') && (
         <Button variant="secondary" className="mb-3 w-full" onClick={() => setView('items')}>
@@ -208,6 +278,8 @@ function BillBody({ visit, onClose }: { visit: OpenVisit; onClose: () => void })
         <div className="grid grid-cols-2 gap-2">
           <Button className="py-3" onClick={() => setView('cash')}><Icon name="cash" /> Cash</Button>
           <Button variant="brass" className="py-3" onClick={() => setView('upi')}><Icon name="qr" /> UPI</Button>
+          <Button variant="secondary" className="text-sm" onClick={() => setView('part')}>Part payment</Button>
+          <Button variant="secondary" className="text-sm" onClick={() => setView('khata')}><Icon name="book" className="h-4 w-4" /> Put on khata</Button>
         </div>
       )}
     </Modal>
@@ -309,5 +381,60 @@ function UpiPanel({ amount, note }: { amount: number; note: string }) {
       {qr ? <img src={qr} alt="UPI payment QR code" className="mx-auto h-64 w-64" /> : <div className="mx-auto h-64 w-64 animate-pulse rounded-xl bg-stone-100" />}
       <p className="mt-3 text-xs text-stone-500">Check the payment arrived on the shop's phone, then tap “UPI received”.</p>
     </div>
+  )
+}
+
+function PartPayment({ visit, due, onBack }: { visit: OpenVisit; due: number; onBack: () => void }) {
+  const { store, run, busy } = useCounter()
+  const [amount, setAmount] = useState('')
+  const [mode, setMode] = useState<PaymentMode>('cash')
+  const paise = parseRupees(amount)
+  const tooMuch = paise !== null && paise > due
+  return (
+    <Modal title={`Part payment · ${visit.player_name}`} onClose={onBack}>
+      <p className="mb-3 text-sm text-stone-600">Take part of the {formatRupees(due)} now. The bill stays open for the rest.</p>
+      <div className="grid gap-2">
+        <AmountInput autoFocus value={amount} onChange={setAmount} />
+        {tooMuch && <p className="text-sm text-red-700">That is more than the {formatRupees(due)} due.</p>}
+        <ModePicker value={mode} onChange={setMode} />
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Button variant="secondary" onClick={onBack}>Back</Button>
+          <Button disabled={busy || !paise || paise <= 0 || tooMuch}
+            onClick={async () => { if (await run(() => store.recordPayment(visit.id, paise!, mode))) onBack() }}>
+            <Icon name="check" /> Received {paise && !tooMuch ? formatRupees(paise) : ''}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function PutOnKhata({ visit, due, onBack, onDone }: { visit: OpenVisit; due: number; onBack: () => void; onDone: () => void }) {
+  const { store, state, run, busy } = useCounter()
+  const known = visit.customer_id ? state.khata.find((c) => c.id === visit.customer_id) : undefined
+  const [name, setName] = useState(known?.name ?? visit.player_name)
+  const [phone, setPhone] = useState(known?.phone ?? visit.phone ?? '')
+  const valid = name.trim() !== '' && normalizePhone(phone) !== null
+  return (
+    <Modal title="Put on khata" onClose={onBack}>
+      <div className="mb-4 rounded-3xl bg-rose-50 p-4 text-center ring-1 ring-rose-200">
+        <p className="tabular text-4xl font-extrabold text-rose-800">{formatRupees(due)}</p>
+        <p className="text-sm text-rose-900">goes on {visit.player_name}’s khata, and this bill closes</p>
+      </div>
+      <div className="grid gap-2">
+        <Input placeholder="Customer name" value={name} onChange={(e) => setName(e.target.value)} />
+        <PhoneInput value={phone} onChange={setPhone} placeholder="Customer mobile number (needed for khata)" />
+        {known && known.balance_paise > 0 && (
+          <p className="text-sm text-stone-600">They already owe {formatRupees(known.balance_paise)}; new total will be {formatRupees(known.balance_paise + due)}.</p>
+        )}
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Button variant="secondary" onClick={onBack}>Back</Button>
+          <Button disabled={busy || !valid}
+            onClick={async () => { if (await run(() => store.closeToKhata(visit.id, name, phone))) onDone() }}>
+            <Icon name="book" className="h-4 w-4" /> Put on khata
+          </Button>
+        </div>
+      </div>
+    </Modal>
   )
 }

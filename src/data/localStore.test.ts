@@ -285,3 +285,114 @@ describe('roles', () => {
     expect(state.members).toHaveLength(1)
   })
 })
+
+describe('payments and khata', () => {
+  const item = (name: string) => state.products.find((p) => p.name === name)!.id
+  const visitOf = (id: string) => state.openVisits.find((v) => v.id === id)
+
+  it('takes part-payments and keeps the bill open until the rest is paid', async () => {
+    const [a] = await players('A')
+    await store.addItem(a, item('Maggi'), 3) // ₹120
+    await store.recordPayment(a, 5000, 'cash')
+    await reload()
+    expect(bill(a)).toBe(7000)
+    await expect(store.recordPayment(a, 9000, 'upi')).rejects.toThrow('more than the ₹70 due')
+    await expect(store.recordPayment(a, 0, 'upi')).rejects.toThrow('more than ₹0')
+    await store.checkout(a, 'upi')
+    await reload()
+    expect(visitOf(a)).toBeUndefined()
+  })
+
+  it('links players who give a mobile number to a customer', async () => {
+    const withPhone = await store.openVisit(state.branch.id, { player_name: 'Amit', phone: '+91 98111 11111' })
+    const without = await store.openVisit(state.branch.id, { player_name: 'Ravi', phone: null })
+    await reload()
+    expect(visitOf(withPhone)!.customer_id).not.toBeNull()
+    expect(visitOf(without)!.customer_id).toBeNull()
+    // The same number later is the same customer.
+    const again = await store.openVisit(state.branch.id, { player_name: 'Amit K', phone: '9811111111' })
+    await reload()
+    expect(visitOf(again)!.customer_id).toBe(visitOf(withPhone)!.customer_id)
+  })
+
+  it('puts the unpaid rest on khata, and reopening the bill brings it back', async () => {
+    const [a] = await players('A')
+    await store.addItem(a, item('Maggi'), 3) // ₹120
+    await store.recordPayment(a, 5000, 'cash')
+    await expect(store.closeToKhata(a, 'Amit', '123')).rejects.toThrow('mobile')
+    await store.closeToKhata(a, 'Amit', '9811111111')
+    await reload()
+    expect(visitOf(a)).toBeUndefined()
+    expect(state.khata).toEqual([expect.objectContaining({ name: 'Amit', phone: '9811111111', balance_paise: 7000 })])
+
+    await store.reopenVisit(a)
+    await reload()
+    expect(bill(a)).toBe(7000)
+    expect(state.khata).toEqual([])
+
+    // A payment recorded by mistake can be removed while the bill is open.
+    const payment = visitOf(a)!.payments[0]
+    await store.voidPayment(payment.id)
+    await expect(store.voidPayment(payment.id)).rejects.toThrow('already removed')
+    await reload()
+    expect(bill(a)).toBe(12000)
+    await store.checkout(a, 'cash')
+    await expect(store.voidPayment(payment.id)).rejects.toThrow()
+  })
+
+  it('receives khata money, never more than is owed, and records old balances', async () => {
+    const [a] = await players('A')
+    await store.addItem(a, item('Tea'), 4) // ₹60
+    await store.closeToKhata(a, 'Ravi', '9822222222')
+    await reload()
+    const ravi = state.khata[0]
+    minutes(5)
+    await store.receiveKhata(ravi.id, state.branch.id, 2000, 'upi')
+    await expect(store.receiveKhata(ravi.id, state.branch.id, 5000, 'cash')).rejects.toThrow('more than the ₹40 on khata')
+    let ledger = await store.loadKhata(ravi.id)
+    expect(ledger.customer.balance_paise).toBe(4000)
+    expect(ledger.entries.map((e) => e.kind)).toEqual(['payment', 'charge'])
+    await expect(store.voidKhataEntry(ledger.entries[1].id)).rejects.toThrow('Reopen the bill')
+    await store.voidKhataEntry(ledger.entries[0].id)
+    ledger = await store.loadKhata(ravi.id)
+    expect(ledger.customer.balance_paise).toBe(6000)
+
+    await store.addKhata(orgId, state.branch.id, 'Old Customer', '9833333333', 25000, 'From paper khata')
+    await reload()
+    expect(state.khata.map((c) => [c.name, c.balance_paise]).sort()).toEqual([['Old Customer', 25000], ['Ravi', 6000]])
+  })
+
+  it('history lists bills closed in the period with day totals', async () => {
+    const { summarize } = await import('../lib/finance')
+    const [a, b, c] = await players('A', 'B', 'C')
+    await store.addItem(a, item('Maggi'), 1) // ₹40 cash
+    await store.addItem(b, item('Tea'), 2) // ₹30: ₹10 UPI + ₹20 khata
+    await store.addItem(c, item('Chips'), 1) // stays open
+    await store.checkout(a, 'cash')
+    await store.recordPayment(b, 1000, 'upi')
+    await store.closeToKhata(b, 'B', '9844444444')
+    await reload()
+    await store.receiveKhata(state.khata[0].id, state.branch.id, 500, 'cash')
+
+    const from = new Date(clock - 3600_000).toISOString()
+    const to = new Date(clock + 3600_000).toISOString()
+    const history = await store.loadHistory(state.branch.id, from, to)
+    expect(history.visits.map((v) => v.player_name).sort()).toEqual(['A', 'B'])
+    expect(summarize(history)).toEqual({
+      bills: 2, billed: 7000, cash: 4500, upi: 1000, onKhata: 2000, khataReceived: 500, collected: 5500,
+    })
+    const yesterday = await store.loadHistory(state.branch.id, new Date(clock - 2 * 86400_000).toISOString(), from)
+    expect(yesterday.visits).toEqual([])
+  })
+
+  it('only the admin handles money, history and khata', async () => {
+    const [a] = await players('A')
+    await store.addItem(a, item('Maggi'), 1)
+    await loginAsNew('maintainer')
+    await expect(store.recordPayment(a, 100, 'cash')).rejects.toThrow('Only the admin')
+    await expect(store.closeToKhata(a, 'A', '9811111111')).rejects.toThrow('Only the admin')
+    await expect(store.loadHistory(state.branch.id, '2000-01-01', '2100-01-01')).rejects.toThrow('Only the admin')
+    await expect(store.addKhata(orgId, state.branch.id, 'X', '9811111111', 100, '')).rejects.toThrow('Only the admin')
+    expect(state.khata).toEqual([])
+  })
+})

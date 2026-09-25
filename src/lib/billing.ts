@@ -1,4 +1,4 @@
-// Billing rules. Keep in sync with the SQL functions in supabase/schema.sql
+// Billing rules. Keep in sync with the SQL functions in supabase/migrations
 // (end_frame), which apply the same rules on the server.
 
 export interface PauseSpan {
@@ -41,10 +41,17 @@ export function splitAmount(totalPaise: number, count: number): number[] {
   return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0))
 }
 
-export function visitTotals(visit: { charges: { amount_paise: number }[]; payments: { amount_paise: number }[] }) {
-  const charged = visit.charges.reduce((sum, c) => sum + c.amount_paise, 0)
-  const paid = visit.payments.reduce((sum, p) => sum + p.amount_paise, 0)
-  return { charged, paid, due: charged - paid }
+type Amount = { amount_paise: number; voided_at?: string | null }
+
+/** Removed (voided) payments don't count. */
+const live = <T extends Amount>(rows: T[]) => rows.filter((r) => !r.voided_at)
+const total = (rows: Amount[]) => rows.reduce((sum, r) => sum + r.amount_paise, 0)
+
+export function visitTotals(visit: { charges: Amount[]; payments: Amount[]; khata?: (Amount & { kind: string })[] }) {
+  const charged = total(visit.charges)
+  const paid = total(live(visit.payments))
+  const onKhata = total(live(visit.khata ?? []).filter((k) => k.kind === 'charge'))
+  return { charged, paid, onKhata, due: charged - paid - onKhata }
 }
 
 export function formatRupees(paise: number): string {

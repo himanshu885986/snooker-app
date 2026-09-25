@@ -1,5 +1,5 @@
 // Who may do what. The database enforces the same rules (require_role in
-// supabase/schema.sql); keep both in sync.
+// supabase/migrations); keep both in sync.
 
 import type { Role } from '../data/types'
 

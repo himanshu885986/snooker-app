@@ -23,6 +23,7 @@ const faqs = [
   { q: 'Do I need to buy any hardware?', a: 'No. It runs in the browser on any phone, tablet or laptop. Add it to the home screen and it opens like an app.' },
   { q: 'What if the internet goes down?', a: 'Timers are worked out from the saved start time, so they stay correct. Starting, ending and billing need a connection to save.' },
   { q: 'Can my staff take money or change times?', a: 'Only the admin can collect payment, change a frame’s time, cancel a frame or remove items. Every change records who made it.' },
+  { q: 'Can regulars pay later?', a: 'Yes. Put the unpaid amount on their khata, found by mobile number. The Khata tab shows who owes what, and you record their payment when it comes in.' },
   { q: 'Do players need to install anything?', a: 'No. They just scan the UPI QR code on their bill to pay.' },
   { q: 'Can I change the rate per minute?', a: 'Yes, per table, whenever you like. A frame that is already running keeps the rate it started with.' },
   { q: 'Is my shop’s data private?', a: 'Yes. Each business is kept separate, and staff only see the business they are added to.' },
@@ -80,7 +81,7 @@ export function Landing({ onLogin, onRegister }: LandingProps) {
           <div className="rounded-3xl bg-white p-6 ring-1 ring-stone-900/5">
             <p className="mb-4 text-sm font-bold uppercase tracking-wider text-stone-400">The paper register</p>
             <ul className="space-y-3 text-stone-600">
-              {['Entry and exit times written by hand', 'Minutes × rate worked out at the end of the night', 'Arguments over who lost and who pays', 'Chai and cigarettes forgotten on the bill'].map((t) => (
+              {['Entry and exit times written by hand', 'Minutes × rate worked out at the end of the night', 'Arguments over who lost and who pays', 'Khata balances scattered across pages'].map((t) => (
                 <li key={t} className="flex gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-red-100 text-red-700"><Icon name="x" className="h-3 w-3" /></span>{t}</li>
               ))}
             </ul>
@@ -88,7 +89,7 @@ export function Landing({ onLogin, onRegister }: LandingProps) {
           <div className="rounded-3xl bg-felt-900 p-6 text-white">
             <p className="mb-4 text-sm font-bold uppercase tracking-wider text-brass-300">With Snooker Counter</p>
             <ul className="space-y-3 text-white/85">
-              {['One tap to start, pause and end each frame', 'The bill is calculated live, to the paisa', 'Tap who lost — their share is added for them', 'Every item goes on the right player’s bill'].map((t) => (
+              {['One tap to start, pause and end each frame', 'The bill is calculated live, to the paisa', 'Tap who lost — their share is added for them', 'Khata and daily cash totals in one place'].map((t) => (
                 <li key={t} className="flex gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-felt-400 text-felt-950"><Icon name="check" className="h-3 w-3" /></span>{t}</li>
               ))}
             </ul>

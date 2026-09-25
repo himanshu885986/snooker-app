@@ -1,6 +1,6 @@
 // Mobile + PIN login without SMS costs: every device gets a free anonymous
 // Supabase session, and the database links it to a person once the PIN is
-// checked (pin_login in supabase/schema.sql).
+// checked (pin_login in supabase/migrations).
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Account, AuthApi } from './types'

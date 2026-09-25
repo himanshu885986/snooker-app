@@ -5,9 +5,10 @@ import { roleLabels } from './lib/permissions'
 import { TablesView } from './components/TablesView'
 import { PlayersView } from './components/PlayersView'
 import { SettingsView } from './components/SettingsView'
+import { KhataView } from './components/KhataView'
 import { Icon, Logo, type IconName } from './components/icons'
 
-type Tab = 'tables' | 'players' | 'settings'
+type Tab = 'tables' | 'players' | 'khata' | 'settings'
 const BRANCH_KEY = 'snooker-branch'
 const ORG_KEY = 'snooker-org'
 
@@ -113,6 +114,7 @@ export function App({ store, account, auth, onLogout }: AppProps) {
   const tabs: [Tab, string, IconName][] = [
     ['tables', 'Tables', 'table'],
     ['players', 'Bills', 'receipt'],
+    ...(counter.can('collect') ? [['khata', 'Khata', 'book'] as [Tab, string, IconName]] : []),
     counter.can('manage') ? ['settings', 'Settings', 'sliders'] : ['settings', 'Account', 'user'],
   ]
 
@@ -159,6 +161,7 @@ export function App({ store, account, auth, onLogout }: AppProps) {
         <main>
           {tab === 'tables' && <TablesView />}
           {tab === 'players' && <PlayersView />}
+          {tab === 'khata' && <KhataView />}
           {tab === 'settings' && (
             <SettingsView
               account={account}
@@ -171,7 +174,7 @@ export function App({ store, account, auth, onLogout }: AppProps) {
         </main>
 
         <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-stone-900/5 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-          <div className="mx-auto grid max-w-md grid-cols-3">
+          <div className="mx-auto grid max-w-md" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
             {tabs.map(([id, label, icon]) => (
               <button
                 key={id}

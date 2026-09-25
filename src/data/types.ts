@@ -76,6 +76,8 @@ export interface Visit {
   opened_at: string
   closed_at: string | null
   status: 'open' | 'closed'
+  /** Linked regular customer (set when a valid mobile number is given). */
+  customer_id: string | null
 }
 
 export interface Frame {
@@ -123,6 +125,46 @@ export interface Payment {
   amount_paise: number
   mode: PaymentMode
   created_at: string
+  /** Set when the admin removed a payment recorded by mistake. */
+  voided_at: string | null
+}
+
+/** A regular customer and what they owe on khata. */
+export interface Customer {
+  id: string
+  org_id: string
+  name: string
+  phone: string
+  /** Positive = they owe the shop. */
+  balance_paise: number
+  last_activity_at: string | null
+}
+
+export interface KhataEntry {
+  id: string
+  customer_id: string
+  branch_id: string | null
+  /** charge = money owed, payment = money received against it. */
+  kind: 'charge' | 'payment'
+  amount_paise: number
+  mode: PaymentMode | null
+  visit_id: string | null
+  note: string | null
+  created_at: string
+  voided_at: string | null
+}
+
+/** A closed bill, for payment history. */
+export interface ClosedVisit extends Visit {
+  charges: Charge[]
+  payments: Payment[]
+  khata: KhataEntry[]
+}
+
+export interface History {
+  visits: ClosedVisit[]
+  /** Khata money received at this shop in the period. */
+  khataPayments: KhataEntry[]
 }
 
 /** A frame that is currently on a table, with everything needed to show it. */
@@ -149,6 +191,8 @@ export interface BranchState {
   products: Product[]
   activeFrames: ActiveFrame[]
   openVisits: OpenVisit[]
+  /** Customers who owe money; only loaded for the admin. */
+  khata: Customer[]
 }
 
 export interface NewPlayer {
@@ -172,7 +216,22 @@ export interface DataStore {
   cancelFrame(frameId: string): Promise<void>
   addItem(visitId: string, productId: string, quantity: number): Promise<void>
   removeItem(chargeId: string): Promise<void>
+  /** Pay everything due and close the bill. */
   checkout(visitId: string, mode: PaymentMode): Promise<void>
+  /** Take part of the bill; it stays open. */
+  recordPayment(visitId: string, amountPaise: number, mode: PaymentMode): Promise<void>
+  /** Put what is still due on the customer's khata and close the bill. */
+  closeToKhata(visitId: string, name: string, phone: string): Promise<void>
+  reopenVisit(visitId: string): Promise<void>
+  voidPayment(paymentId: string): Promise<void>
+
+  /** Bills closed at this shop between two times (ISO), with khata money received there. */
+  loadHistory(branchId: string, fromIso: string, toIso: string): Promise<History>
+  loadKhata(customerId: string): Promise<{ customer: Customer; entries: KhataEntry[] }>
+  receiveKhata(customerId: string, branchId: string, amountPaise: number, mode: PaymentMode): Promise<void>
+  /** Record an amount owed from outside the app, e.g. the old paper khata. */
+  addKhata(orgId: string, branchId: string, name: string, phone: string, amountPaise: number, note: string): Promise<void>
+  voidKhataEntry(entryId: string): Promise<void>
 
   saveBranch(branch: Omit<Branch, 'id'> & { id?: string }): Promise<void>
   saveTable(table: Omit<Table, 'id'> & { id?: string }): Promise<void>

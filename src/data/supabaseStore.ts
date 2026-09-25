@@ -1,8 +1,11 @@
 // Real database. Anything involving money goes through the SQL functions in
-// supabase/schema.sql so the rules are enforced on the server, not the device.
+// supabase/migrations so the rules are enforced on the server, not the device.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { ActiveFrame, Branch, BranchState, Charge, DataStore, FramePause, FramePlayer, Member, OpenVisit, Org, Payment, Product, Role, Table } from './types'
+import type {
+  ActiveFrame, Branch, BranchState, Charge, ClosedVisit, Customer, DataStore, FramePause, FramePlayer, KhataEntry, Member,
+  OpenVisit, Org, Payment, Product, Role, Table,
+} from './types'
 
 function check<T>(result: { data: T; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message)
@@ -38,14 +41,19 @@ export function createSupabaseStore(supabase: SupabaseClient): DataStore {
           .eq('branch_id', branch.id).eq('status', 'open').order('opened_at'),
       ])
 
-      const members = myRole === 'admin'
-        ? check(await supabase.rpc('list_members', { p_org_id: orgId })) as Member[]
-        : []
+      const [members, khata] = myRole === 'admin'
+        ? await Promise.all([
+          supabase.rpc('list_members', { p_org_id: orgId }).then((r) => check(r) as Member[]),
+          supabase.from('customer_balances').select('*').eq('org_id', orgId).neq('balance_paise', 0)
+            .order('balance_paise', { ascending: false }).then((r) => check(r) as Customer[]),
+        ])
+        : [[], []]
 
       return {
         org: check(org) as Org,
         role: myRole,
         members,
+        khata,
         branches,
         branch,
         tables: check(tables) as Table[],
@@ -94,6 +102,36 @@ export function createSupabaseStore(supabase: SupabaseClient): DataStore {
     addItem: (visitId, productId, quantity) => rpc('add_item', { p_visit_id: visitId, p_product_id: productId, p_quantity: quantity }),
     removeItem: (chargeId) => rpc('remove_item', { p_charge_id: chargeId }),
     checkout: (visitId, mode) => rpc('checkout', { p_visit_id: visitId, p_mode: mode }),
+    recordPayment: (visitId, amountPaise, mode) =>
+      rpc('record_payment', { p_visit_id: visitId, p_amount_paise: amountPaise, p_mode: mode }),
+    closeToKhata: (visitId, name, phone) => rpc('close_to_khata', { p_visit_id: visitId, p_name: name, p_phone: phone }),
+    reopenVisit: (visitId) => rpc('reopen_visit', { p_visit_id: visitId }),
+    voidPayment: (paymentId) => rpc('void_payment', { p_payment_id: paymentId }),
+
+    async loadHistory(branchId, fromIso, toIso) {
+      const [visits, khataPayments] = await Promise.all([
+        supabase.from('visits').select('*, charges(*), payments(*), khata:khata_entries(*)')
+          .eq('branch_id', branchId).eq('status', 'closed').gte('closed_at', fromIso).lt('closed_at', toIso)
+          .order('closed_at', { ascending: false }),
+        supabase.from('khata_entries').select('*')
+          .eq('branch_id', branchId).eq('kind', 'payment').gte('created_at', fromIso).lt('created_at', toIso),
+      ])
+      return { visits: check(visits) as ClosedVisit[], khataPayments: check(khataPayments) as KhataEntry[] }
+    },
+
+    async loadKhata(customerId) {
+      const [customer, entries] = await Promise.all([
+        supabase.from('customer_balances').select('*').eq('id', customerId).single(),
+        supabase.from('khata_entries').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }),
+      ])
+      return { customer: check(customer) as Customer, entries: check(entries) as KhataEntry[] }
+    },
+
+    receiveKhata: (customerId, branchId, amountPaise, mode) =>
+      rpc('receive_khata', { p_customer_id: customerId, p_branch_id: branchId, p_amount_paise: amountPaise, p_mode: mode }),
+    addKhata: (orgId, branchId, name, phone, amountPaise, note) =>
+      rpc('add_khata', { p_org_id: orgId, p_branch_id: branchId, p_name: name, p_phone: phone, p_amount_paise: amountPaise, p_note: note }),
+    voidKhataEntry: (entryId) => rpc('void_khata_entry', { p_entry_id: entryId }),
 
     async saveBranch(branch) {
       if (!branch.name.trim()) throw new Error('Shop name is required')

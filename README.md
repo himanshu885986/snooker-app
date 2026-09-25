@@ -27,7 +27,7 @@ Without Supabase settings the app runs in **demo mode**. It works like the real 
 ## Connect the real database (Supabase, free)
 
 1. Create a free account at https://supabase.com and create a new project. Pick the **Mumbai** region.
-2. Open **SQL Editor → New query**, paste the contents of `supabase/schema.sql` and click **Run**. Use a fresh project: this schema replaces the earlier single-shop version.
+2. Open **SQL Editor → New query**, paste the contents of `supabase/migrations/001_initial.sql` and click **Run**. Then do the same with each later file in `supabase/migrations`, in number order.
 3. Open **Authentication → Sign In / Providers** and turn **on** "Allow anonymous sign-ins". Every device gets a free anonymous session, and the mobile number + PIN login is checked by the database, so no SMS or email service is needed.
 4. Open **Project Settings → API** and copy the Project URL and the `anon` public key into a `.env` file:
    ```
@@ -35,6 +35,24 @@ Without Supabase settings the app runs in **demo mode**. It works like the real 
    VITE_SUPABASE_ANON_KEY=eyJ...
    ```
 5. Run `npm run dev` again, open the app and choose **New business**. Whoever registers becomes that business's **admin**.
+
+## Updating an existing database
+
+When a new file appears in `supabase/migrations`, run **only that file** in the SQL Editor of your live project. Each file is written to run once, on top of the previous ones, without losing data.
+
+| File | Adds |
+|---|---|
+| `001_initial.sql` | Shops, tables, frames, bills, logins and roles |
+| `002_payments_khata.sql` | Part-payments, payment history, khata (customer credit) |
+
+## Payments, history and khata
+
+- **Part payment:** take any amount now by cash or UPI. The bill stays open and shows what is left.
+- **Put on khata:** the rest of the bill goes on the customer's khata, found by mobile number, and the bill closes. Players who gave a mobile number are recognised next time, and their bill warns if they already owe money.
+- **History (Bills → History):** bills closed on a day, with that day's cash, UPI, khata given and khata received. **Reopen bill** undoes a checkout; any amount it put on khata comes off the khata again.
+- **Khata tab:** who owes how much, each customer's ledger, **Receive payment**, and **Old khata** to copy balances from the paper notebook.
+- **Mistakes:** a payment or khata entry recorded by mistake is removed with ×. It stays in the records, marked as removed.
+- Only the admin can see or change any of this.
 
 ## Logins and roles
 
@@ -44,7 +62,7 @@ Each shop owner registers their own business, so the app can be offered to many 
 |---|---|---|---|
 | See tables and bills | ✅ | ✅ | ✅ |
 | Start, pause and end frames; add players and items | ✅ | ✅ | ❌ |
-| Take payment (checkout) | ✅ | ❌ | ❌ |
+| Take payment, history, khata | ✅ | ❌ | ❌ |
 | Adjust frame time, cancel a frame, remove an item | ✅ | ❌ | ❌ |
 | Rates, prices, shops, staff and PINs | ✅ | ❌ | ❌ |
 
@@ -73,11 +91,11 @@ src/data/types.ts           data model and the DataStore interface
 src/data/localStore.ts      demo mode (browser storage)
 src/data/supabaseStore.ts   real database
 src/data/supabaseAuth.ts    mobile + PIN login
-supabase/schema.sql         tables, security rules and billing functions
+supabase/migrations/        database: tables, security rules, billing and khata functions
 src/components/             Tables, Bills and Settings screens
 ```
 
-The billing and role rules exist in two places: `src/lib/` (demo mode, live timers, which buttons show) and `supabase/schema.sql` (what is actually allowed and charged). If you change a rule, change both.
+The billing and role rules exist in two places: `src/lib/` and `src/data/localStore.ts` (demo mode, live timers, which buttons show) and `supabase/migrations` (what is actually allowed and charged). If you change a rule, change both.
 
 ## Credits
 
