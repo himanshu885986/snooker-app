@@ -9,14 +9,32 @@ import { games } from '../lib/games'
 import { assertCan, isValidPin, normalizePhone, type Action } from '../lib/permissions'
 import type {
   Account, AuthApi, Branch, BranchState, Charge, ClosedVisit, Customer, DataStore, Frame, FramePause, FramePlayer,
-  KhataEntry, Member, NewPlayer, Org, PaymentMode, Payment, Product, Role, Side, Table, Visit,
+  KhataEntry, Member, NewPlayer, Org, PaymentMode, Payment, Product, Role, Side, Subscription, Table, Visit,
 } from './types'
 
 type DemoMember = Member & { pin: string }
 type DemoCustomer = Pick<Customer, 'id' | 'org_id' | 'name' | 'phone'> & { created_at: string }
 
+/** Demo stand-in for the platform owner's settings (supabase/migrations/004_subscriptions.sql). */
+export const DEMO_PLATFORM = {
+  upi_id: 'demo-platform@upi', upi_name: 'PlayKhata (demo)', price_paise: 49900,
+  period_days: 30, trial_days: 7, grace_days: 0, provisional_days: 2,
+}
+const DAY = 86_400_000
+
+interface DemoSubscriptionPayment {
+  id: string
+  amount_paise: number
+  months: number
+  reference: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  claimed_at: string
+  decided_at: string | null
+}
+
 interface Db {
-  org: Org
+  org: Org & { trial_ends_at: string; paid_until: string | null; provisional_until: string | null }
+  subscriptionPayments: DemoSubscriptionPayment[]
   members: DemoMember[]
   branches: Branch[]
   tables: Table[]
@@ -47,7 +65,7 @@ function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
 }
 
-function seed(businessName: string, owner: DemoMember): Db {
+function seed(businessName: string, owner: DemoMember, at: number): Db {
   const orgId = newId()
   const branchId = newId()
   const tables: Table[] = [1, 2, 3, 4].map((n) => ({
@@ -61,7 +79,11 @@ function seed(businessName: string, owner: DemoMember): Db {
     id: newId(), branch_id: branchId, group_name: group, name, price_paise: price, image: null, active: true,
   }))
   return {
-    org: { id: orgId, name: businessName },
+    org: {
+      id: orgId, name: businessName, trial_ends_at: new Date(at + DEMO_PLATFORM.trial_days * DAY).toISOString(),
+      paid_until: null, provisional_until: null,
+    },
+    subscriptionPayments: [],
     members: [owner],
     branches: [{ id: branchId, org_id: orgId, name: 'Main shop', upi_id: null, upi_name: null }],
     tables, products, visits: [], frames: [], framePlayers: [], framePauses: [], charges: [], payments: [],
@@ -82,6 +104,10 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     const db = JSON.parse(raw) as Db
     // Demo data saved by older versions of the app.
     db.customers ??= []
+    db.subscriptionPayments ??= []
+    db.org.trial_ends_at ??= new Date(now() + DEMO_PLATFORM.trial_days * DAY).toISOString()
+    db.org.paid_until ??= null
+    db.org.provisional_until ??= null
     db.khataEntries ??= []
     for (const t of db.tables as (Table & { rate_paise_per_min?: number })[]) {
       if (t.rate_paise_per_hour === undefined) {
@@ -126,14 +152,41 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     if (!db || !member) return null
     return {
       id: member.user_id, name: member.name, phone: member.phone,
-      memberships: [{ org_id: db.org.id, org_name: db.org.name, role: member.role }],
+      memberships: [{ org_id: db.org.id, org_name: db.org.name, role: member.role, active: now() < accessUntil(db) }],
     }
   }
 
   /** Apply a change atomically: nothing is saved if `fn` throws. */
+  function accessUntil(db: Db): number {
+    const times = [db.org.trial_ends_at, db.org.paid_until, db.org.provisional_until].filter(Boolean).map((t) => Date.parse(t!))
+    return Math.max(...times) + DEMO_PLATFORM.grace_days * DAY
+  }
+
+  function assertActive(db: Db) {
+    if (now() >= accessUntil(db)) throw new Error('The subscription for this business has ended. The owner can renew it in the app.')
+  }
+
+  function subscriptionOf(db: Db): Subscription {
+    const t = now()
+    const after = (iso: string | null) => !!iso && Date.parse(iso) > t
+    const pending = db.subscriptionPayments.find((p) => p.status === 'pending')
+    return {
+      state: after(db.org.paid_until) ? 'active' : after(db.org.trial_ends_at) ? 'trial'
+        : after(db.org.provisional_until) ? 'pending' : accessUntil(db) > t ? 'grace' : 'expired',
+      access_until: new Date(accessUntil(db)).toISOString(),
+      trial_ends_at: db.org.trial_ends_at,
+      paid_until: db.org.paid_until,
+      ...DEMO_PLATFORM,
+      role: roleOf(db),
+      shops: Math.max(1, db.branches.length),
+      pending: pending ? { id: pending.id, amount_paise: pending.amount_paise, months: pending.months, reference: pending.reference, claimed_at: pending.claimed_at } : null,
+    }
+  }
+
   async function write<T>(action: Action, fn: (db: Db, at: string) => T): Promise<T> {
     const db = read()
     assertCan(roleOf(db), action)
+    assertActive(db)
     const result = fn(db, new Date(now()).toISOString())
     save(db)
     return result
@@ -163,7 +216,7 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
       if (!businessName.trim()) throw new Error('Business name is required')
       if (!ownerName.trim()) throw new Error('Your name is required')
       const owner: DemoMember = { user_id: newId(), name: ownerName.trim(), phone: normalized, role: 'admin', pin }
-      const db = seed(businessName.trim(), owner)
+      const db = seed(businessName.trim(), owner, now())
       storage.setItem(SESSION_KEY, owner.user_id)
       save(db)
       return account(db)!
@@ -250,9 +303,32 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     mode: 'demo',
     auth,
 
+    async subscription() {
+      return subscriptionOf(read())
+    },
+
+    async claimSubscriptionPayment(_orgId, months, reference) {
+      const db = read()
+      if (roleOf(db) !== 'admin') throw new Error('Only the admin can do this')
+      if (![1, 3, 6, 12].includes(months)) throw new Error('Choose 1, 3, 6 or 12 months')
+      if (db.subscriptionPayments.some((p) => p.status === 'pending')) throw new Error('A payment is already waiting for approval')
+      const at = now()
+      db.subscriptionPayments.push({
+        id: newId(), amount_paise: DEMO_PLATFORM.price_paise * Math.max(1, db.branches.length) * months, months, reference: reference.trim() || null,
+        status: 'pending', claimed_at: new Date(at).toISOString(), decided_at: null,
+      })
+      const recentlyRejected = db.subscriptionPayments.some((p) => p.status === 'rejected' && p.decided_at && at - Date.parse(p.decided_at) < 30 * DAY)
+      if (at >= accessUntil(db) && !recentlyRejected) {
+        db.org.provisional_until = new Date(at + DEMO_PLATFORM.provisional_days * DAY).toISOString()
+      }
+      save(db)
+      return subscriptionOf(db)
+    },
+
     async load(_orgId, branchId) {
       const db = read()
       const role = roleOf(db)
+      assertActive(db)
       const branch = db.branches.find((b) => b.id === branchId) ?? db.branches[0]
       const activeFrames = db.frames
         .filter((f) => f.branch_id === branch.id && (f.status === 'running' || f.status === 'paused'))
@@ -497,6 +573,7 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     async loadHistory(branchId, fromIso, toIso) {
       const db = read()
       assertCan(roleOf(db), 'collect')
+      assertActive(db)
       const inRange = (iso: string | null) => !!iso && iso >= fromIso && iso < toIso
       const visits: ClosedVisit[] = db.visits
         .filter((v) => v.branch_id === branchId && v.status === 'closed' && inRange(v.closed_at))
@@ -514,6 +591,7 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     async loadKhata(customerId) {
       const db = read()
       assertCan(roleOf(db), 'collect')
+      assertActive(db)
       const c = db.customers.find((x) => x.id === customerId)
       if (!c) throw new Error('Customer not found')
       const entries = db.khataEntries

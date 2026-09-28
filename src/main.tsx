@@ -9,24 +9,25 @@ import { Landing } from './components/Landing'
 import { Button } from './components/ui'
 import { createLocalStore } from './data/localStore'
 import { createSupabaseAuth } from './data/supabaseAuth'
-import { createSupabaseStore } from './data/supabaseStore'
-import type { Account, AuthApi, DataStore } from './data/types'
+import { createPlatformApi, createSupabaseStore } from './data/supabaseStore'
+import type { Account, AuthApi, DataStore, PlatformApi } from './data/types'
+import { PlatformView } from './components/PlatformView'
 
 registerSW({ immediate: true })
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
-function backend(): { store: DataStore; auth: AuthApi } {
+function backend(): { store: DataStore; auth: AuthApi; platform?: PlatformApi } {
   if (url && key) {
     const client = createClient(url, key)
-    return { store: createSupabaseStore(client), auth: createSupabaseAuth(client) }
+    return { store: createSupabaseStore(client), auth: createSupabaseAuth(client), platform: createPlatformApi(client) }
   }
   const store = createLocalStore(localStorage)
   return { store, auth: store.auth }
 }
 
-const { store, auth } = backend()
+const { store, auth, platform } = backend()
 
 /** Set once someone logs in here, so a shop's counter tablet opens on the login screen, not the landing page. */
 const USED_KEY = 'snooker-device-used'
@@ -76,6 +77,15 @@ function Root() {
         onBack={() => { setScreen('landing'); window.scrollTo(0, 0) }} onLoggedIn={loggedIn} />
     )
   }
+  const platformApi = account.is_platform_admin ? platform : undefined
+  if (account.memberships.length === 0 && platformApi) {
+    return (
+      <>
+        <PlatformView platform={platformApi} />
+        <div className="pb-8 text-center"><Button variant="secondary" onClick={logout}>Log out</Button></div>
+      </>
+    )
+  }
   if (account.memberships.length === 0) {
     return (
       <div className="grid min-h-screen place-items-center p-6 text-center">
@@ -87,7 +97,7 @@ function Root() {
       </div>
     )
   }
-  return <App store={store} account={account} auth={auth} onLogout={logout} />
+  return <App store={store} account={account} auth={auth} onLogout={logout} platform={platformApi} />
 }
 
 createRoot(document.getElementById('root')!).render(

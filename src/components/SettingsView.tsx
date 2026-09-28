@@ -4,7 +4,10 @@ import { formatMinutes, formatRate, formatRupees, parseRupees } from '../lib/bil
 import { gameImage, gameKinds, games } from '../lib/games'
 import { foodImages, foodImageUrl, productImageId, suggestFoodImage } from '../lib/foodImages'
 import { isValidPin, normalizePhone, roleDescriptions, roleLabels } from '../lib/permissions'
-import type { Account, AuthApi, Billing, GameKind, Member, Product, RateUnit, Role, Table } from '../data/types'
+import type { Account, AuthApi, Billing, GameKind, Member, PlatformApi, Product, RateUnit, Role, Subscription, Table } from '../data/types'
+import { daysLeft } from './Subscription'
+import { formatDate } from './money'
+import { PlatformView } from './PlatformView'
 import { PhoneInput, PinInput } from './Login'
 import { Icon } from './icons'
 import { Avatar, Button, Input, Modal, Select } from './ui'
@@ -19,6 +22,9 @@ export interface SettingsProps {
   onLogout: () => void
   onSelectOrg: (orgId: string) => void
   onBranchAdded: () => void
+  subscription: Subscription | null
+  onPay: () => void
+  platform?: PlatformApi
 }
 
 export function SettingsView(props: SettingsProps) {
@@ -26,6 +32,8 @@ export function SettingsView(props: SettingsProps) {
   return (
     <div className="mx-auto grid max-w-2xl grid-cols-1 gap-4 p-3">
       <AccountSection {...props} />
+      {props.platform && <PlatformSection platform={props.platform} />}
+      {can('manage') && props.subscription && <SubscriptionSection sub={props.subscription} onPay={props.onPay} />}
       {can('manage') && (
         <>
           <StaffSection />
@@ -548,5 +556,50 @@ function ProductEditor({ product, group: initialGroup, groups, onClose }: { prod
         ))}
       </div>
     </Modal>
+  )
+}
+
+function SubscriptionSection({ sub, onPay }: { sub: Subscription; onPay: () => void }) {
+  const left = daysLeft(sub.access_until)
+  const label: Record<Subscription['state'], string> = {
+    trial: `Free trial · ${left} ${left === 1 ? 'day' : 'days'} left`,
+    active: `Active until ${formatDate(sub.access_until)}`,
+    pending: 'Payment being checked',
+    grace: `Overdue · access stops ${formatDate(sub.access_until)}`,
+    expired: 'Ended',
+  }
+  return (
+    <Section title="Subscription" img="/art/money.png"
+      hint={`${formatRupees(sub.price_paise)} per shop / ${sub.period_days === 30 ? 'month' : `${sub.period_days} days`}, paid by UPI.`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-bold">{label[sub.state]}</p>
+          <p className="text-sm text-stone-500">
+            {sub.shops} {sub.shops === 1 ? 'shop' : 'shops'} · {formatRupees(sub.price_paise * sub.shops)} per {sub.period_days === 30 ? 'month' : 'period'}
+          </p>
+        </div>
+        {!sub.pending && <Button onClick={onPay}>{sub.state === 'trial' ? 'Pay now' : 'Renew'}</Button>}
+      </div>
+      {sub.pending && (
+        <p className="rounded-xl bg-sky-50 p-3 text-sm text-sky-900">
+          {formatRupees(sub.pending.amount_paise)} sent {formatDate(sub.pending.claimed_at)}, waiting for confirmation.
+        </p>
+      )}
+      <p className="text-xs text-stone-500">Paying early adds time after the current period ends, so no days are lost. Each new shop is included from the next payment.</p>
+    </Section>
+  )
+}
+
+function PlatformSection({ platform }: { platform: PlatformApi }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Section title="Platform owner" img="/art/chart.png" hint="Only you see this: every business, their payments and your UPI details.">
+      <Button variant="secondary" onClick={() => setOpen(true)}><Icon name="users" className="h-4 w-4" /> Open platform dashboard</Button>
+      {open && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-chalk">
+          <PlatformView platform={platform} onClose={() => setOpen(false)} />
+        </div>
+      )}
+    </Section>
   )
 }

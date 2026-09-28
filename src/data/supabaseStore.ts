@@ -4,7 +4,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   ActiveFrame, Branch, BranchState, Charge, ClosedVisit, Customer, DataStore, FramePause, FramePlayer, KhataEntry, Member,
-  OpenVisit, Org, Payment, Product, Role, Table,
+  OpenVisit, Org, Payment, PlatformApi, PlatformBusiness, PlatformPayment, PlatformSettings, Product, Role, Subscription, Table,
 } from './types'
 
 function check<T>(result: { data: T; error: { message: string } | null }): T {
@@ -19,6 +19,14 @@ export function createSupabaseStore(supabase: SupabaseClient): DataStore {
 
   return {
     mode: 'supabase',
+
+    async subscription(orgId) {
+      return check(await supabase.rpc('subscription_status', { p_org_id: orgId })) as Subscription
+    },
+
+    async claimSubscriptionPayment(orgId, months, reference) {
+      return check(await supabase.rpc('claim_subscription_payment', { p_org_id: orgId, p_months: months, p_reference: reference })) as Subscription
+    },
 
     async load(orgId, branchId) {
       const [org, branchRows, role] = await Promise.all([
@@ -159,5 +167,21 @@ export function createSupabaseStore(supabase: SupabaseClient): DataStore {
     updateMemberRole: (orgId, userId, role) => rpc('update_member_role', { p_org_id: orgId, p_user_id: userId, p_role: role }),
     removeMember: (orgId, userId) => rpc('remove_member', { p_org_id: orgId, p_user_id: userId }),
     resetMemberPin: (orgId, userId, pin) => rpc('reset_member_pin', { p_org_id: orgId, p_user_id: userId, p_pin: pin }),
+  }
+}
+
+export function createPlatformApi(supabase: SupabaseClient): PlatformApi {
+  const call = async <T>(fn: string, args: Record<string, unknown> = {}) => check(await supabase.rpc(fn, args)) as T
+  return {
+    businesses: () => call<PlatformBusiness[]>('platform_businesses'),
+    payments: () => call<PlatformPayment[]>('platform_payments'),
+    decide: (paymentId, approve, note) => call<void>('platform_decide_payment', { p_payment_id: paymentId, p_approve: approve, p_note: note }),
+    record: (orgId, amountPaise, days, note) =>
+      call<void>('platform_record_payment', { p_org_id: orgId, p_amount_paise: amountPaise, p_days: days, p_note: note }),
+    getSettings: () => call<PlatformSettings>('platform_get_settings'),
+    updateSettings: (st) => call<void>('platform_update_settings', {
+      p_upi_id: st.upi_id, p_upi_name: st.upi_name, p_price_paise: st.price_paise, p_period_days: st.period_days,
+      p_trial_days: st.trial_days, p_grace_days: st.grace_days, p_provisional_days: st.provisional_days,
+    }),
   }
 }

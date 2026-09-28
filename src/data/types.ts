@@ -27,6 +27,8 @@ export interface Membership {
   org_id: string
   org_name: string
   role: Role
+  /** False when the business's trial or subscription has ended. */
+  active?: boolean
 }
 
 /** The person logged in on this device. */
@@ -35,6 +37,83 @@ export interface Account {
   name: string
   phone: string
   memberships: Membership[]
+  /** The person running the platform (approves subscription payments). */
+  is_platform_admin?: boolean
+}
+
+/**
+ * trial / active = has access; pending = paid, waiting for approval (provisional access);
+ * grace = past due but still inside the grace days; expired = blocked.
+ */
+export type SubscriptionState = 'trial' | 'active' | 'pending' | 'grace' | 'expired'
+
+export interface Subscription {
+  state: SubscriptionState
+  access_until: string
+  trial_ends_at: string
+  paid_until: string | null
+  /** Per shop, per period. */
+  price_paise: number
+  /** Shops (branches) in the business; the bill is price × shops × months. */
+  shops: number
+  period_days: number
+  /** Where shop owners pay (the platform owner's UPI). */
+  upi_id: string | null
+  upi_name: string | null
+  provisional_days: number
+  role: Role
+  pending: { id: string; amount_paise: number; months: number; reference: string | null; claimed_at: string } | null
+}
+
+export interface PlatformSettings {
+  upi_id: string | null
+  upi_name: string | null
+  price_paise: number
+  period_days: number
+  trial_days: number
+  grace_days: number
+  provisional_days: number
+}
+
+export interface PlatformBusiness {
+  id: string
+  name: string
+  created_at: string
+  trial_ends_at: string
+  paid_until: string | null
+  access_until: string
+  active: boolean
+  owner_name: string | null
+  owner_phone: string | null
+  shops: number
+  tables: number
+  last_played_at: string | null
+  pending: boolean
+}
+
+export interface PlatformPayment {
+  id: string
+  org_id: string
+  org_name: string
+  owner_phone: string | null
+  amount_paise: number
+  months: number
+  reference: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  claimed_at: string
+  decided_at: string | null
+  period_end: string | null
+  note: string | null
+}
+
+/** Only for the platform owner. */
+export interface PlatformApi {
+  businesses(): Promise<PlatformBusiness[]>
+  payments(): Promise<PlatformPayment[]>
+  decide(paymentId: string, approve: boolean, note: string): Promise<void>
+  record(orgId: string, amountPaise: number, days: number, note: string): Promise<void>
+  getSettings(): Promise<PlatformSettings>
+  updateSettings(settings: PlatformSettings): Promise<void>
 }
 
 /** A staff member of a business, as the admin sees them. */
@@ -222,6 +301,10 @@ export interface NewPlayer {
 
 export interface DataStore {
   mode: 'demo' | 'supabase'
+  /** Works even when access has ended, so the app can show the payment screen. */
+  subscription(orgId: string): Promise<Subscription>
+  /** The owner says they paid by UPI; the platform owner approves it. */
+  claimSubscriptionPayment(orgId: string, months: number, reference: string): Promise<Subscription>
   load(orgId: string, branchId: string | null): Promise<BranchState>
   /** Called whenever data changes (here or on another device). Returns an unsubscribe function. */
   subscribe(onChange: () => void): () => void

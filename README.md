@@ -1,4 +1,4 @@
-# Snooker Counter
+# PlayKhata
 
 Table timers, per-player billing and shop sales for snooker parlours. It is a web app (PWA) that installs on a phone or tablet like a normal app.
 
@@ -45,6 +45,23 @@ When a new file appears in `supabase/migrations`, run **only that file** in the 
 | `001_initial.sql` | Shops, tables, frames, bills, logins and roles |
 | `002_payments_khata.sql` | Part-payments, payment history, khata (customer credit) |
 | `003_games_item_groups.sql` | PlayStation and other hourly games; item groups (Cigarettes → Gold Flake, Classic) |
+| `004_subscriptions.sql` | 7-day trial, monthly fee per shop paid by UPI to the platform owner, blocking when unpaid |
+| `005_fix_platform_settings_update.sql` | Fix saving Price & UPI in the platform dashboard |
+
+## Subscriptions (charging shops for the app)
+
+- Every new business gets a **free trial** (7 days). Businesses that existed when `004` was run got 7 days from then.
+- After that they pay **price per shop × number of shops × months** (1, 3, 6 or 12) by UPI **to the platform owner's UPI ID**, straight from **Settings → Subscription** or the banner. Paying early adds time after the current period, so nothing is lost.
+- The owner taps **"I've paid"** (with the UPI reference). While the platform owner checks it, the shop keeps access for a couple of days. If it's rejected, access stops, and there's no free access again for 30 days.
+- When time runs out, **everything for that business is blocked in the database** (reads and actions) until a payment is approved. The owner sees a payment screen; staff see "ask the owner to renew". No data is deleted.
+
+**Becoming the platform owner** (once, after running `004`):
+1. Register in the app with your own mobile number.
+2. In Supabase → SQL Editor run, with your number:
+   ```sql
+   insert into platform_admins (user_id) select id from app_users where phone = '9XXXXXXXXX';
+   ```
+3. Log in again, then open **Settings → Platform owner → Open platform dashboard**. Set your UPI ID, name and price per shop under **Price & UPI**. Approve payments under **Payments**, after checking your bank or UPI app. Use **Record payment** for cash or free days.
 
 ## Tables, stations and games
 

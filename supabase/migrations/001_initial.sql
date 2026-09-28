@@ -1,4 +1,4 @@
--- Snooker Counter — database schema for Supabase (Postgres).
+-- PlayKhata — database schema for Supabase (Postgres).
 -- Run this first on a fresh project (Supabase → SQL Editor → New query → paste → Run),
 -- then each later file in supabase/migrations in number order.
 -- Money is stored in integer paise (₹1 = 100 paise).

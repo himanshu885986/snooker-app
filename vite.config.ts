@@ -13,8 +13,8 @@ export default defineConfig({
       // Product pictures and illustrations must work offline too.
       workbox: { globPatterns: ['**/*.{js,css,html,svg,png,woff2}'] },
       manifest: {
-        name: 'Snooker Counter',
-        short_name: 'Snooker',
+        name: 'PlayKhata',
+        short_name: 'PlayKhata',
         description: 'Table timers, per-player billing and shop sales for snooker parlours',
         theme_color: '#0c3824',
         background_color: '#f6f4ee',

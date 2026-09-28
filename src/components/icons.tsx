@@ -61,7 +61,7 @@ export function Wordmark({ light = false }: { light?: boolean }) {
     <span className="flex items-center gap-2">
       <Logo className="h-7 w-7" />
       <span className={`text-lg font-extrabold tracking-tight ${light ? 'text-white' : 'text-felt-900'}`}>
-        Snooker<span className={light ? 'text-brass-300' : 'text-brass-600'}>Counter</span>
+        Play<span className={light ? 'text-brass-300' : 'text-brass-600'}>Khata</span>
       </span>
     </span>
   )

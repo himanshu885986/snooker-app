@@ -20,6 +20,7 @@ const features = [
 ]
 
 const faqs = [
+  { q: 'How much does it cost?', a: 'Free for 7 days. After that you pay a small monthly fee per shop by UPI, right from the app. No card and no contract; if you stop paying, your data is kept safe until you renew.' },
   { q: 'Do I need to buy any hardware?', a: 'No. It runs in the browser on any phone, tablet or laptop. Add it to the home screen and it opens like an app.' },
   { q: 'What if the internet goes down?', a: 'Timers are worked out from the saved start time, so they stay correct. Starting, ending and billing need a connection to save.' },
   { q: 'Can my staff take money or change times?', a: 'Only the admin can collect payment, change a frame’s time, cancel a frame or remove items. Every change records who made it.' },
@@ -69,7 +70,7 @@ export function Landing({ onLogin, onRegister }: LandingProps) {
             <p className="mt-5 flex flex-wrap gap-x-5 gap-y-1 text-sm text-white/60">
               <span className="flex items-center gap-1.5"><Icon name="check" className="h-4 w-4 text-felt-300" /> No hardware</span>
               <span className="flex items-center gap-1.5"><Icon name="check" className="h-4 w-4 text-felt-300" /> Any phone or tablet</span>
-              <span className="flex items-center gap-1.5"><Icon name="check" className="h-4 w-4 text-felt-300" /> Set up in 2 minutes</span>
+              <span className="flex items-center gap-1.5"><Icon name="check" className="h-4 w-4 text-felt-300" /> 7 days free</span>
             </p>
           </div>
           <HeroMockup />
@@ -88,7 +89,7 @@ export function Landing({ onLogin, onRegister }: LandingProps) {
             </ul>
           </div>
           <div className="rounded-3xl bg-felt-900 p-6 text-white">
-            <p className="mb-4 text-sm font-bold uppercase tracking-wider text-brass-300">With Snooker Counter</p>
+            <p className="mb-4 text-sm font-bold uppercase tracking-wider text-brass-300">With PlayKhata</p>
             <ul className="space-y-3 text-white/85">
               {['One tap to start, pause and end each frame', 'The bill is calculated live, to the paisa', 'Tap who lost — their share is added for them', 'Khata and daily cash totals in one place'].map((t) => (
                 <li key={t} className="flex gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-felt-400 text-felt-950"><Icon name="check" className="h-3 w-3" /></span>{t}</li>

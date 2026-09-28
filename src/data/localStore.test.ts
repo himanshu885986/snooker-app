@@ -469,3 +469,40 @@ describe('older demo data', () => {
     expect(s.products[0].group_name).toBeNull()
   })
 })
+
+describe('subscription', () => {
+  const days = (n: number) => { clock += n * 86_400_000 }
+
+  it('gives a 7-day trial, then blocks everything until a payment is claimed', async () => {
+    expect((await store.subscription(orgId)).state).toBe('trial')
+    const [a] = await players('A')
+    days(8)
+    expect((await store.subscription(orgId)).state).toBe('expired')
+    await expect(store.load(orgId, null)).rejects.toThrow('subscription for this business has ended')
+    await expect(store.addItem(a, state.products[0].id, 1)).rejects.toThrow('subscription')
+    expect((await store.auth.whoami())!.memberships[0].active).toBe(false)
+
+    const sub = await store.claimSubscriptionPayment(orgId, 1, 'UTR123')
+    expect(sub.state).toBe('pending')
+    expect(sub.pending).toMatchObject({ amount_paise: 49900, months: 1, reference: 'UTR123' })
+    await store.load(orgId, null) // provisional access while waiting for approval
+    await expect(store.claimSubscriptionPayment(orgId, 1, '')).rejects.toThrow('already waiting')
+    days(3)
+    expect((await store.subscription(orgId)).state).toBe('expired')
+  })
+
+  it('charges per shop', async () => {
+    await store.saveBranch({ org_id: orgId, name: 'Shop 2', upi_id: null, upi_name: null })
+    days(8)
+    const sub = await store.claimSubscriptionPayment(orgId, 3, '')
+    expect(sub.shops).toBe(2)
+    expect(sub.pending!.amount_paise).toBe(49900 * 2 * 3)
+  })
+
+  it('only the admin can pay, for 1, 3, 6 or 12 months', async () => {
+    await expect(store.claimSubscriptionPayment(orgId, 2, '')).rejects.toThrow('1, 3, 6 or 12')
+    await loginAsNew('maintainer')
+    await expect(store.claimSubscriptionPayment(orgId, 1, '')).rejects.toThrow('Only the admin')
+    expect((await store.subscription(orgId)).role).toBe('maintainer')
+  })
+})

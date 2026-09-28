@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CounterContext, makeCan, type Counter } from './counter'
-import type { Account, AuthApi, BranchState, DataStore } from './data/types'
+import type { Account, AuthApi, BranchState, DataStore, PlatformApi, Subscription } from './data/types'
 import { roleLabels } from './lib/permissions'
 import { TablesView } from './components/TablesView'
 import { PlayersView } from './components/PlayersView'
 import { SettingsView } from './components/SettingsView'
 import { KhataView } from './components/KhataView'
 import { Icon, Logo, type IconName } from './components/icons'
+import { Paywall, PayPanel, SubscriptionBanner } from './components/Subscription'
+import { Modal } from './components/ui'
 
 type Tab = 'tables' | 'players' | 'khata' | 'settings'
 const BRANCH_KEY = 'snooker-branch'
@@ -24,10 +26,14 @@ export interface AppProps {
   account: Account
   auth: AuthApi
   onLogout: () => void
+  /** Present only for the platform owner. */
+  platform?: PlatformApi
 }
 
-export function App({ store, account, auth, onLogout }: AppProps) {
+export function App({ store, account, auth, onLogout, platform }: AppProps) {
   const [state, setState] = useState<BranchState | null>(null)
+  const [sub, setSub] = useState<Subscription | null>(null)
+  const [paying, setPaying] = useState(false)
   const [orgId, setOrgId] = useState(() => {
     const saved = remembered(ORG_KEY)
     return account.memberships.some((m) => m.org_id === saved) ? saved! : account.memberships[0].org_id
@@ -43,7 +49,10 @@ export function App({ store, account, auth, onLogout }: AppProps) {
   const reload = useCallback(async () => {
     try {
       const { orgId, branchId } = target.current
-      setState(await store.load(orgId, branchId))
+      // Check access first: an expired business can't load anything, and gets the payment screen.
+      const current = await store.subscription(orgId)
+      setSub(current)
+      if (current.state !== 'expired') setState(await store.load(orgId, branchId))
       setLoadError(null)
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e))
@@ -52,14 +61,16 @@ export function App({ store, account, auth, onLogout }: AppProps) {
 
   useEffect(() => { void reload() }, [reload, orgId, branchId])
   useEffect(() => store.subscribe(() => void reload()), [store, reload])
-  // Catch up after the phone/tablet wakes up or regains internet.
+  // Catch up after the phone/tablet wakes up or regains internet, and notice when a trial runs out.
   useEffect(() => {
     const onFocus = () => void reload()
     window.addEventListener('focus', onFocus)
     window.addEventListener('online', onFocus)
+    const timer = setInterval(onFocus, 5 * 60_000)
     return () => {
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('online', onFocus)
+      clearInterval(timer)
     }
   }, [reload])
 
@@ -83,6 +94,24 @@ export function App({ store, account, auth, onLogout }: AppProps) {
     [store, state, run, busy],
   )
 
+  const selectBranch = (id: string) => {
+    remember(BRANCH_KEY, id)
+    setBranchId(id)
+  }
+  const selectOrg = (id: string) => {
+    remember(ORG_KEY, id)
+    setOrgId(id)
+    setBranchId(null)
+    setState(null)
+    setTab('tables')
+  }
+
+  if (sub?.state === 'expired') {
+    const orgName = account.memberships.find((m) => m.org_id === orgId)?.org_name ?? ''
+    return <Paywall sub={sub} account={account} orgId={orgId} orgName={orgName} store={store}
+      onChanged={() => void reload()} onLogout={onLogout} onSelectOrg={selectOrg} />
+  }
+
   if (!counter) {
     return (
       <div className="grid min-h-screen place-items-center p-6 text-center">
@@ -97,17 +126,6 @@ export function App({ store, account, auth, onLogout }: AppProps) {
         ) : <p className="text-stone-500">Loading…</p>}
       </div>
     )
-  }
-
-  const selectBranch = (id: string) => {
-    remember(BRANCH_KEY, id)
-    setBranchId(id)
-  }
-  const selectOrg = (id: string) => {
-    remember(ORG_KEY, id)
-    setOrgId(id)
-    setBranchId(null)
-    setTab('tables')
   }
 
   const { state: s } = counter
@@ -148,6 +166,13 @@ export function App({ store, account, auth, onLogout }: AppProps) {
           </div>
         </header>
 
+        {sub && <SubscriptionBanner sub={sub} onPay={() => setPaying(true)} />}
+        {paying && sub && (
+          <Modal title="Pay subscription" onClose={() => setPaying(false)}>
+            <PayPanel sub={sub} orgName={s.org.name} store={store} orgId={s.org.id} onClaimed={(next) => { setSub(next); setPaying(false) }} />
+          </Modal>
+        )}
+
         {error && (
           <div className="sticky top-20 z-30 px-3 pt-3">
             <div role="alert" className="rise mx-auto flex max-w-xl items-start gap-2 rounded-2xl bg-red-700 p-3 text-white shadow-xl">
@@ -169,6 +194,9 @@ export function App({ store, account, auth, onLogout }: AppProps) {
               onLogout={onLogout}
               onSelectOrg={selectOrg}
               onBranchAdded={() => void reload()}
+              subscription={sub}
+              onPay={() => setPaying(true)}
+              platform={platform}
             />
           )}
         </main>
