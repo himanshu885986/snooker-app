@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from 'react'
 import { useCounter } from '../counter'
-import { parseRupees } from '../lib/billing'
+import { formatMinutes, formatRate, formatRupees, parseRupees } from '../lib/billing'
+import { gameImage, gameKinds, games } from '../lib/games'
 import { foodImages, foodImageUrl, productImageId, suggestFoodImage } from '../lib/foodImages'
 import { isValidPin, normalizePhone, roleDescriptions, roleLabels } from '../lib/permissions'
-import type { Account, AuthApi, Member, Product, Role, Table } from '../data/types'
+import type { Account, AuthApi, Billing, GameKind, Member, Product, RateUnit, Role, Table } from '../data/types'
 import { PhoneInput, PinInput } from './Login'
 import { Icon } from './icons'
-import { Avatar, Button, Input, Select } from './ui'
+import { Avatar, Button, Input, Modal, Select } from './ui'
 
 type StaffRole = Exclude<Role, 'admin'>
 
@@ -23,19 +24,17 @@ export interface SettingsProps {
 export function SettingsView(props: SettingsProps) {
   const { store, state, can } = useCounter()
   return (
-    <div className="mx-auto grid max-w-2xl gap-4 p-3">
+    <div className="mx-auto grid max-w-2xl grid-cols-1 gap-4 p-3">
       <AccountSection {...props} />
       {can('manage') && (
         <>
           <StaffSection />
           <ShopSection key={state.branch.id} />
-          <Section title="Tables & rates" img="/art/ball.png">
-            {state.tables.map((t) => <TableRow key={t.id} table={t} />)}
-            <TableRow />
+          <Section title="Tables & stations" img="/art/ball.png" hint="Snooker, pool, PlayStation or any game charged by time.">
+            <TableList />
           </Section>
-          <Section title="Shop items" img="/food/noodles.png" hint="Tap a picture to change it. New items get a picture from their name.">
-            {state.products.map((p) => <ProductRow key={p.id} product={p} />)}
-            <ProductRow />
+          <Section title="Shop items" img="/food/noodles.png" hint="Put types of one item in a group, e.g. Cigarettes → Gold Flake, Classic.">
+            <ProductList />
           </Section>
           <Section title="Shops" img="/art/shop.png">
             <p className="text-sm text-stone-600">Switch shops from the top bar. Each shop has its own tables, items and bills.</p>
@@ -233,7 +232,7 @@ function Section({ title, img, hint, children }: { title: string; img?: string; 
           {hint && <p className="text-xs text-stone-500">{hint}</p>}
         </div>
       </div>
-      <div className="grid gap-2.5">{children}</div>
+      <div className="grid grid-cols-1 gap-2.5">{children}</div>
     </section>
   )
 }
@@ -282,113 +281,272 @@ function AddShop({ onAdded }: { onAdded: () => void }) {
   )
 }
 
-function TableRow({ table }: { table?: Table }) {
+function Row({ img, title, detail, onEdit }: { img: ReactNode; title: string; detail: string; onEdit: () => void }) {
+  return (
+    <li>
+      <button onClick={onEdit} className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-chalk">
+        {img}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-bold">{title}</span>
+          <span className="block truncate text-xs text-stone-500">{detail}</span>
+        </span>
+        <Icon name="pencil" className="h-4 w-4 text-stone-400" />
+      </button>
+    </li>
+  )
+}
+
+const listClass = 'divide-y divide-stone-100 overflow-hidden rounded-2xl ring-1 ring-stone-900/5'
+
+// ─── Tables & stations ───────────────────────────────────────────────────────
+
+function tableDetail(t: Table): string {
+  const parts = [games[t.kind].label, formatRate(t), t.billing === 'loser' ? 'loser pays' : 'players split']
+  if (t.min_minutes > 1) parts.push(`min ${formatMinutes(t.min_minutes)}`)
+  if (t.block_minutes > 1) parts.push(`${t.block_minutes}-min blocks`)
+  return parts.join(' · ')
+}
+
+function TableList() {
+  const { state } = useCounter()
+  const [editing, setEditing] = useState<Table | 'new' | null>(null)
+  return (
+    <>
+      <ul className={listClass}>
+        {state.tables.map((t) => (
+          <Row key={t.id} img={<img src={gameImage(t.kind)} alt="" className="h-9 w-9" />} title={t.name} detail={tableDetail(t)} onEdit={() => setEditing(t)} />
+        ))}
+      </ul>
+      <Button variant="secondary" onClick={() => setEditing('new')}><Icon name="plus" className="h-4 w-4" /> Add table or station</Button>
+      {editing && <TableEditor table={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+    </>
+  )
+}
+
+function TableEditor({ table, onClose }: { table: Table | null; onClose: () => void }) {
   const { store, state, run, busy } = useCounter()
+  const [kind, setKind] = useState<GameKind>(table?.kind ?? 'snooker')
   const [name, setName] = useState(table?.name ?? '')
-  const [rate, setRate] = useState(table ? rupees(table.rate_paise_per_min) : '7')
-  const ratePaise = parseRupees(rate)
+  const [billing, setBilling] = useState<Billing>(table?.billing ?? 'loser')
+  const [unit, setUnit] = useState<RateUnit>(table?.rate_unit ?? 'minute')
+  const [rate, setRate] = useState(() => rupees(table ? (table.rate_unit === 'minute' ? table.rate_paise_per_hour / 60 : table.rate_paise_per_hour) : 700))
+  const [block, setBlock] = useState(String(table?.block_minutes ?? 1))
+  const [min, setMin] = useState(String(table?.min_minutes ?? 1))
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const inUse = !!table && state.activeFrames.some((f) => f.table_id === table.id)
-  const dirty = !table || name !== table.name || ratePaise !== table.rate_paise_per_min
-  const valid = name.trim() !== '' && ratePaise !== null && ratePaise > 0
+
+  const ratePaise = parseRupees(rate)
+  const blockN = Number(block)
+  const minN = Number(min)
+  const perHour = ratePaise === null ? null : unit === 'minute' ? ratePaise * 60 : ratePaise
+  const valid = name.trim() !== '' && perHour !== null && perHour > 0
+    && Number.isInteger(blockN) && blockN >= 1 && blockN <= 240 && Number.isInteger(minN) && minN >= 1 && minN <= 600
+
+  /** Picking a kind for a new station fills in sensible rules for it. */
+  const pickKind = (k: GameKind) => {
+    setKind(k)
+    if (table) return
+    const g = games[k]
+    setBilling(g.billing)
+    setUnit(g.rate_unit)
+    setRate(rupees(g.rate_unit === 'minute' ? g.rate_paise_per_hour / 60 : g.rate_paise_per_hour))
+    setBlock(String(g.block_minutes))
+    setMin(String(g.min_minutes))
+    const count = state.tables.filter((t) => t.kind === k).length
+    setName(k === 'snooker' || k === 'pool' ? `Table ${state.tables.length + 1}` : `${k === 'playstation' ? 'PS5' : g.label} ${count + 1}`)
+  }
 
   const save = async () => {
     const sort = table?.sort ?? Math.max(0, ...state.tables.map((t) => t.sort)) + 1
     const ok = await run(() => store.saveTable({
-      id: table?.id, branch_id: state.branch.id, name: name.trim(), rate_paise_per_min: ratePaise!, sort, active: true,
+      id: table?.id, branch_id: state.branch.id, name: name.trim(), kind, billing, rate_unit: unit,
+      rate_paise_per_hour: perHour!, block_minutes: blockN, min_minutes: minN, sort, active: true,
     }))
-    if (ok && !table) { setName(''); setRate('7') }
+    if (ok) onClose()
   }
 
-  return (
-    <div className="flex items-center gap-2">
-      <Input placeholder={table ? 'Name' : 'New table name'} value={name} onChange={(e) => setName(e.target.value)} />
-      <span className="flex shrink-0 items-center gap-1 text-sm">₹<Input className="max-w-20" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />/min</span>
-      <Button className="shrink-0" variant={table ? 'secondary' : 'primary'} disabled={busy || !dirty || !valid} onClick={save}>{table ? 'Save' : 'Add'}</Button>
-      {table && (
-        <Button
-          className="shrink-0"
-          variant="ghost"
-          title={inUse ? 'Table is in use' : 'Remove table'}
-          disabled={busy || inUse}
-          onClick={() => run(() => store.saveTable({ ...table, active: false }))}
-          aria-label={`Remove ${table.name}`}
-        >
-          <Icon name="x" className="h-4 w-4" />
-        </Button>
-      )}
+  const segment = <T extends string>(value: T, set: (v: T) => void, options: [T, string][]) => (
+    <div className="grid gap-1 rounded-xl bg-stone-900/5 p-1 text-sm font-bold" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}>
+      {options.map(([v, label]) => (
+        <button key={v} type="button" onClick={() => set(v)}
+          className={`rounded-lg px-2 py-2 transition ${value === v ? 'bg-white text-felt-900 shadow-sm' : 'text-stone-500'}`}>{label}</button>
+      ))}
     </div>
+  )
+
+  return (
+    <Modal title={table ? `Edit ${table.name}` : 'Add table or station'} onClose={onClose}>
+      <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
+          {gameKinds.map((k) => (
+            <button key={k} type="button" onClick={() => pickKind(k)} title={games[k].label}
+              className={`flex flex-col items-center gap-1 rounded-xl p-2 text-[11px] font-semibold leading-tight ring-1 transition ${kind === k ? 'bg-white ring-2 ring-felt-600' : 'ring-stone-900/10 hover:bg-white'}`}>
+              <img src={gameImage(k)} alt="" className="h-8 w-8" />{games[k].label.split(' / ')[0]}
+            </button>
+          ))}
+        </div>
+        <label className="text-sm font-medium">Name<Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Table 5 or PS5 2" /></label>
+
+        <div className="text-sm font-medium">Rate
+          <div className="mt-1 grid grid-cols-[1fr_auto] gap-2">
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400">₹</span>
+              <Input className="pl-8" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+            </div>
+            {segment(unit, (u) => {
+              // Keep the same money: ₹7/min ⇄ ₹420/hr
+              if (ratePaise !== null) setRate(rupees(u === 'hour' && unit === 'minute' ? ratePaise * 60 : u === 'minute' && unit === 'hour' ? Math.round(ratePaise / 60) : ratePaise))
+              setUnit(u)
+            }, [['minute', 'per min'], ['hour', 'per hour']])}
+          </div>
+        </div>
+
+        <div className="text-sm font-medium">Who pays
+          <div className="mt-1">{segment(billing, setBilling, [['loser', 'Loser pays'], ['split', 'Players split']])}</div>
+          <p className="mt-1 text-xs font-normal text-stone-500">
+            {billing === 'loser' ? 'Two sides play; the side that loses pays the whole frame.' : '1–8 players; at the end, the ones you tick share the bill.'}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 text-sm font-medium">
+          <label>Charge in blocks of
+            <div className="mt-1 flex items-center gap-2"><Input inputMode="numeric" value={block} onChange={(e) => setBlock(e.target.value.replace(/\D/g, ''))} /> min</div>
+          </label>
+          <label>Minimum charge
+            <div className="mt-1 flex items-center gap-2"><Input inputMode="numeric" value={min} onChange={(e) => setMin(e.target.value.replace(/\D/g, ''))} /> min</div>
+          </label>
+        </div>
+        {valid && perHour && (
+          <p className="rounded-xl bg-chalk p-3 text-xs text-stone-600">
+            Example: 47 minutes costs <b>{formatRupees(Math.round(Math.max(minN, Math.ceil(47 / blockN) * blockN) * perHour / 60))}</b>
+            {blockN > 1 && ` (charged as ${formatMinutes(Math.max(minN, Math.ceil(47 / blockN) * blockN))})`}.
+            {table && ' Games already running keep their old rate.'}
+          </p>
+        )}
+
+        <Button disabled={busy || !valid} onClick={save}><Icon name="check" /> {table ? 'Save' : 'Add'}</Button>
+
+        {table && (confirmRemove ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-red-50 p-3 text-sm">
+            <span className="flex-1">Remove {table.name}? Past bills are kept.</span>
+            <Button variant="secondary" onClick={() => setConfirmRemove(false)}>Cancel</Button>
+            <Button variant="danger" disabled={busy} onClick={async () => { if (await run(() => store.saveTable({ ...table, active: false }))) onClose() }}>Remove</Button>
+          </div>
+        ) : (
+          <Button variant="ghost" className="text-sm text-red-700" disabled={inUse} title={inUse ? 'In use right now' : undefined} onClick={() => setConfirmRemove(true)}>
+            {inUse ? 'In use right now, can’t remove' : `Remove ${table.name}`}
+          </Button>
+        ))}
+      </div>
+    </Modal>
   )
 }
 
-function ProductRow({ product }: { product?: Product }) {
+// ─── Shop items ──────────────────────────────────────────────────────────────
+
+function ProductList() {
+  const { state } = useCounter()
+  const [editing, setEditing] = useState<{ product: Product | null; group: string } | null>(null)
+  const byGroup = new Map<string, Product[]>()
+  for (const p of state.products) {
+    const g = p.group_name?.trim() ?? ''
+    byGroup.set(g, [...(byGroup.get(g) ?? []), p])
+  }
+  const groups = [...byGroup.keys()].filter(Boolean).sort()
+  const row = (p: Product) => (
+    <Row key={p.id} img={<img src={foodImageUrl(productImageId(p))} alt="" className="h-9 w-9" />}
+      title={p.name} detail={formatRupees(p.price_paise)} onEdit={() => setEditing({ product: p, group: p.group_name ?? '' })} />
+  )
+
+  return (
+    <>
+      {groups.map((g) => (
+        <div key={g}>
+          <div className="mb-1 flex items-center justify-between gap-2 px-1">
+            <p className="text-sm font-extrabold">{g} <span className="font-normal text-stone-500">· {byGroup.get(g)!.length} types</span></p>
+            <button className="flex items-center gap-1 text-sm font-semibold text-felt-700" onClick={() => setEditing({ product: null, group: g })}>
+              <Icon name="plus" className="h-4 w-4" /> Add type
+            </button>
+          </div>
+          <ul className={listClass}>{byGroup.get(g)!.map(row)}</ul>
+        </div>
+      ))}
+      {(byGroup.get('') ?? []).length > 0 && (
+        <div>
+          {groups.length > 0 && <p className="mb-1 px-1 text-sm font-extrabold">Other items</p>}
+          <ul className={listClass}>{byGroup.get('')!.map(row)}</ul>
+        </div>
+      )}
+      <Button variant="secondary" onClick={() => setEditing({ product: null, group: '' })}><Icon name="plus" className="h-4 w-4" /> Add item</Button>
+      {editing && <ProductEditor product={editing.product} group={editing.group} groups={groups} onClose={() => setEditing(null)} />}
+    </>
+  )
+}
+
+function ProductEditor({ product, group: initialGroup, groups, onClose }: { product: Product | null; group: string; groups: string[]; onClose: () => void }) {
   const { store, state, run, busy } = useCounter()
   const [name, setName] = useState(product?.name ?? '')
+  const [group, setGroup] = useState(initialGroup)
   const [price, setPrice] = useState(product ? rupees(product.price_paise) : '')
   const [image, setImage] = useState<string | null>(product?.image ?? null)
-  const [picking, setPicking] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const pricePaise = parseRupees(price)
-  const dirty = !product || name !== product.name || pricePaise !== product.price_paise || image !== product.image
   const valid = name.trim() !== '' && pricePaise !== null
-  const shown = productImageId({ name, image })
+  // Grouped items show the group's picture on the tile, so suggest from the group name.
+  const shown = productImageId({ name: group.trim() || name, image })
 
-  const save = async (nextImage = image) => {
+  const save = async () => {
     const ok = await run(() => store.saveProduct({
-      id: product?.id, branch_id: state.branch.id, name: name.trim(), price_paise: pricePaise!, image: nextImage, active: true,
+      id: product?.id, branch_id: state.branch.id, name: name.trim(), group_name: group.trim() || null,
+      price_paise: pricePaise!, image, active: true,
     }))
-    if (ok && !product) { setName(''); setPrice(''); setImage(null) }
-  }
-
-  const choose = (id: string | null) => {
-    setImage(id)
-    setPicking(false)
-    // Saved products take the new picture straight away.
-    if (product && valid) void save(id)
+    if (ok) onClose()
   }
 
   return (
-    <div className={`grid gap-2 ${product ? '' : 'mt-1 rounded-2xl bg-chalk p-2'}`}>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setPicking((p) => !p)}
-          className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-chalk ring-1 transition hover:ring-felt-600 ${picking ? 'ring-2 ring-felt-600' : 'ring-stone-900/10'}`}
-          aria-label="Choose picture"
-          title="Choose picture"
-        >
-          <img src={foodImageUrl(shown)} alt="" className="h-8 w-8" />
-        </button>
-        <Input placeholder={product ? 'Name' : 'New item, e.g. Maggi'} value={name} onChange={(e) => setName(e.target.value)} />
-        <span className="flex shrink-0 items-center gap-1 text-sm">₹<Input className="max-w-20" inputMode="decimal" placeholder="0" value={price} onChange={(e) => setPrice(e.target.value)} /></span>
-        <Button className="shrink-0" variant={product ? 'secondary' : 'primary'} disabled={busy || !dirty || !valid} onClick={() => save()}>{product ? 'Save' : 'Add'}</Button>
-        {product && (
-          <Button className="shrink-0 px-2.5" variant="ghost" title="Remove item" aria-label={`Remove ${product.name}`} disabled={busy}
-            onClick={() => run(() => store.saveProduct({ ...product, active: false }))}>
-            <Icon name="x" className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
-      {picking && (
-        <div className="rounded-2xl bg-chalk p-2 ring-1 ring-stone-900/5">
-          <div className="grid grid-cols-6 gap-1 sm:grid-cols-8">
+    <Modal title={product ? `Edit ${product.name}` : group ? `Add a type of ${group}` : 'Add item'} onClose={onClose}>
+      <div className="grid grid-cols-1 gap-3">
+        <label className="text-sm font-medium">Group (optional)
+          <Input list="item-groups" value={group} onChange={(e) => setGroup(e.target.value)} placeholder="e.g. Cigarettes, Cold drinks" />
+          <datalist id="item-groups">{groups.map((g) => <option key={g} value={g} />)}</datalist>
+          <span className="mt-1 block text-xs font-normal text-stone-500">Items in the same group show as one tile with a choice of types.</span>
+        </label>
+        <label className="text-sm font-medium">{group.trim() ? 'Type' : 'Name'}
+          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={group.trim() ? 'e.g. Gold Flake' : 'e.g. Maggi'} />
+        </label>
+        <label className="text-sm font-medium">Price
+          <div className="relative mt-1">
+            <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400">₹</span>
+            <Input className="pl-8" inputMode="decimal" placeholder="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+          </div>
+        </label>
+        <div className="text-sm font-medium">Picture
+          <div className="mt-1 grid grid-cols-6 gap-1 rounded-2xl bg-chalk p-2 sm:grid-cols-8">
             {foodImages.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                title={f.label}
-                aria-label={f.label}
-                onClick={() => choose(f.id)}
-                className={`grid aspect-square place-items-center rounded-xl transition hover:bg-white ${shown === f.id ? 'bg-white ring-2 ring-felt-600' : ''}`}
-              >
-                <img src={foodImageUrl(f.id)} alt="" className="h-9 w-9" loading="lazy" />
+              <button key={f.id} type="button" title={f.label} aria-label={f.label} onClick={() => setImage(f.id)}
+                className={`grid aspect-square place-items-center rounded-xl transition hover:bg-white ${shown === f.id ? 'bg-white ring-2 ring-felt-600' : ''}`}>
+                <img src={foodImageUrl(f.id)} alt="" className="h-8 w-8" loading="lazy" />
               </button>
             ))}
           </div>
-          <button type="button" className="mt-1 w-full rounded-lg py-1.5 text-xs font-semibold text-stone-600 hover:bg-white"
-            onClick={() => choose(null)}>
-            Use suggestion from name ({foodImages.find((f) => f.id === suggestFoodImage(name))?.label})
-          </button>
+          {image && (
+            <button type="button" className="mt-1 text-xs font-semibold text-stone-600 underline" onClick={() => setImage(null)}>
+              Use suggestion from name ({foodImages.find((f) => f.id === suggestFoodImage(group.trim() || name))?.label})
+            </button>
+          )}
         </div>
-      )}
-    </div>
+
+        <Button disabled={busy || !valid} onClick={save}><Icon name="check" /> {product ? 'Save' : 'Add'}</Button>
+        {product && (confirmRemove ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-red-50 p-3 text-sm">
+            <span className="flex-1">Remove {product.name}? Past bills are kept.</span>
+            <Button variant="secondary" onClick={() => setConfirmRemove(false)}>Cancel</Button>
+            <Button variant="danger" disabled={busy} onClick={async () => { if (await run(() => store.saveProduct({ ...product, active: false }))) onClose() }}>Remove</Button>
+          </div>
+        ) : (
+          <Button variant="ghost" className="text-sm text-red-700" onClick={() => setConfirmRemove(true)}>Remove {product.name}</Button>
+        ))}
+      </div>
+    </Modal>
   )
 }

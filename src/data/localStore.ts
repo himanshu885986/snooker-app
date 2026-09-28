@@ -4,7 +4,8 @@
 // per browser. PINs are kept as plain text here; this is for trying the app only.
 // The real database stores them hashed (supabase/migrations).
 
-import { billableMinutes, billableSeconds, formatRupees, frameAmount, splitAmount, visitTotals } from '../lib/billing'
+import { billableSeconds, billedMinutes, formatMinutes, formatRupees, frameAmount, splitAmount, visitTotals } from '../lib/billing'
+import { games } from '../lib/games'
 import { assertCan, isValidPin, normalizePhone, type Action } from '../lib/permissions'
 import type {
   Account, AuthApi, Branch, BranchState, Charge, ClosedVisit, Customer, DataStore, Frame, FramePause, FramePlayer,
@@ -50,11 +51,15 @@ function seed(businessName: string, owner: DemoMember): Db {
   const orgId = newId()
   const branchId = newId()
   const tables: Table[] = [1, 2, 3, 4].map((n) => ({
-    id: newId(), branch_id: branchId, name: `Table ${n}`, rate_paise_per_min: 700, sort: n, active: true,
+    id: newId(), branch_id: branchId, name: `Table ${n}`, kind: 'snooker', billing: 'loser', rate_unit: 'minute',
+    rate_paise_per_hour: 42000, block_minutes: 1, min_minutes: 1, sort: n, active: true,
   }))
-  const products: Product[] = [
-    ['Maggi', 4000], ['Tea', 1500], ['Cold drink', 3000], ['Water bottle', 2000], ['Cigarette', 2000], ['Chips', 2000],
-  ].map(([name, price]) => ({ id: newId(), branch_id: branchId, name: name as string, price_paise: price as number, image: null, active: true }))
+  const products: Product[] = ([
+    [null, 'Maggi', 4000], [null, 'Tea', 1500], [null, 'Cold drink', 3000], [null, 'Water bottle', 2000],
+    ['Cigarettes', 'Gold Flake', 2000], ['Cigarettes', 'Classic', 2200], [null, 'Chips', 2000],
+  ] as const).map(([group, name, price]) => ({
+    id: newId(), branch_id: branchId, group_name: group, name, price_paise: price, image: null, active: true,
+  }))
   return {
     org: { id: orgId, name: businessName },
     members: [owner],
@@ -75,9 +80,22 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     const raw = storage.getItem(STORAGE_KEY)
     if (!raw) return null
     const db = JSON.parse(raw) as Db
-    // Demo data saved before khata existed.
+    // Demo data saved by older versions of the app.
     db.customers ??= []
     db.khataEntries ??= []
+    for (const t of db.tables as (Table & { rate_paise_per_min?: number })[]) {
+      if (t.rate_paise_per_hour === undefined) {
+        Object.assign(t, { ...games.snooker, rate_paise_per_hour: (t.rate_paise_per_min ?? 700) * 60, kind: 'snooker' })
+        delete t.rate_paise_per_min
+      }
+    }
+    for (const f of db.frames as (Frame & { rate_paise_per_min?: number })[]) {
+      if (f.rate_paise_per_hour === undefined) {
+        Object.assign(f, { rate_paise_per_hour: (f.rate_paise_per_min ?? 700) * 60, billing: 'loser', block_minutes: 1, min_minutes: 1 })
+        delete f.rate_paise_per_min
+      }
+    }
+    for (const p of db.products) p.group_name ??= null
     return db
   }
 
@@ -296,9 +314,9 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
         const table = db.tables.find((t) => t.id === tableId)
         if (!table) throw new Error('Table not found')
         if (db.frames.some((f) => f.table_id === tableId && (f.status === 'running' || f.status === 'paused'))) {
-          throw new Error(`${table.name} already has a frame running`)
+          throw new Error(`${table.name} is already in use`)
         }
-        validateSides(sideA, sideB)
+        validatePlayers(table.billing, sideA, sideB)
         for (const visitId of [...sideA, ...sideB]) {
           const visit = db.visits.find((v) => v.id === visitId)
           if (!visit || visit.status !== 'open') throw new Error('Player has already checked out')
@@ -307,11 +325,13 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
         const frameId = newId()
         db.frames.push({
           id: frameId, branch_id: table.branch_id, table_id: tableId, started_at: at, ended_at: null,
-          rate_paise_per_min: table.rate_paise_per_min, status: 'running', losing_side: null, billable_seconds: null, amount_paise: null,
+          rate_paise_per_hour: table.rate_paise_per_hour, billing: table.billing, block_minutes: table.block_minutes,
+          min_minutes: table.min_minutes, status: 'running', losing_side: null, billable_seconds: null, amount_paise: null,
           time_adjusted: false,
         })
-        for (const v of sideA) db.framePlayers.push({ frame_id: frameId, visit_id: v, side: 'A' })
-        for (const v of sideB) db.framePlayers.push({ frame_id: frameId, visit_id: v, side: 'B' })
+        const loser = table.billing === 'loser'
+        for (const v of sideA) db.framePlayers.push({ frame_id: frameId, visit_id: v, side: loser ? 'A' : null })
+        for (const v of sideB) db.framePlayers.push({ frame_id: frameId, visit_id: v, side: loser ? 'B' : null })
       })
     },
 
@@ -348,24 +368,39 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
       })
     },
 
-    endFrame(frameId, losingSide: Side) {
+    endFrame(frameId, losingSide: Side | null, payers?: string[]) {
       return write('operate', (db, at) => {
         const frame = activeFrame(db, frameId)
+        const players = db.framePlayers.filter((p) => p.frame_id === frameId).map((p) => p)
+        let payerIds: string[]
+        if (frame.billing === 'loser') {
+          if (losingSide !== 'A' && losingSide !== 'B') throw new Error('Choose the side that lost')
+          payerIds = players.filter((p) => p.side === losingSide).map((p) => p.visit_id)
+        } else if (payers && payers.length > 0) {
+          if (new Set(payers).size !== payers.length || payers.some((id) => !players.some((p) => p.visit_id === id))) {
+            throw new Error('Payers must be players in this session')
+          }
+          payerIds = payers
+        } else {
+          payerIds = players.map((p) => p.visit_id)
+        }
         const pauses = db.framePauses.filter((p) => p.frame_id === frameId)
         for (const p of pauses) if (!p.resumed_at) p.resumed_at = at
         const seconds = billableSeconds(frame.started_at, pauses, Date.parse(at), at)
-        const amount = frameAmount(seconds, frame.rate_paise_per_min)
+        const amount = frameAmount(seconds, frame)
         const tableName = db.tables.find((t) => t.id === frame.table_id)?.name ?? 'Table'
-        const losers = db.framePlayers.filter((p) => p.frame_id === frameId && p.side === losingSide)
-        const shares = splitAmount(amount, losers.length)
-        losers.forEach((loser, i) => {
+        const shares = splitAmount(amount, payerIds.length)
+        payerIds.forEach((visitId, i) => {
           db.charges.push({
-            id: newId(), visit_id: loser.visit_id, source: 'frame', frame_id: frameId, product_id: null,
-            description: frameDescription(tableName, seconds, losers.length),
+            id: newId(), visit_id: visitId, source: 'frame', frame_id: frameId, product_id: null,
+            description: frameDescription(tableName, frame.billing, billedMinutes(seconds, frame), payerIds.length),
             quantity: 1, amount_paise: shares[i], created_at: at,
           })
         })
-        Object.assign(frame, { status: 'ended', ended_at: at, losing_side: losingSide, billable_seconds: seconds, amount_paise: amount })
+        Object.assign(frame, {
+          status: 'ended', ended_at: at, losing_side: frame.billing === 'loser' ? losingSide : null,
+          billable_seconds: seconds, amount_paise: amount,
+        })
       })
     },
 
@@ -386,7 +421,7 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
         if (!product) throw new Error('Product not found')
         db.charges.push({
           id: newId(), visit_id: visitId, source: 'item', frame_id: null, product_id: productId,
-          description: product.name, quantity, amount_paise: product.price_paise * quantity, created_at: at,
+          description: itemDescription(product), quantity, amount_paise: product.price_paise * quantity, created_at: at,
         })
       })
     },
@@ -536,7 +571,8 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
     saveTable(table) {
       return write('manage', (db) => {
         if (!table.name.trim()) throw new Error('Table name is required')
-        if (table.rate_paise_per_min <= 0) throw new Error('Rate must be more than ₹0')
+        if (!(table.rate_paise_per_hour > 0)) throw new Error('Rate must be more than ₹0')
+        if (!(table.block_minutes >= 1 && table.min_minutes >= 1)) throw new Error('Blocks and minimum must be at least 1 minute')
         if (table.id) {
           const i = db.tables.findIndex((t) => t.id === table.id)
           db.tables[i] = { ...db.tables[i], ...table, id: table.id }
@@ -592,16 +628,24 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
   }
 }
 
-export function validateSides(sideA: string[], sideB: string[]) {
-  for (const side of [sideA, sideB]) {
-    if (side.length < 1 || side.length > 2) throw new Error('Each side needs 1 or 2 players')
+export function validatePlayers(billing: 'loser' | 'split', sideA: string[], sideB: string[]) {
+  const all = [...sideA, ...sideB]
+  if (billing === 'loser') {
+    for (const side of [sideA, sideB]) {
+      if (side.length < 1 || side.length > 2) throw new Error('Each side needs 1 or 2 players')
+    }
+  } else if (all.length < 1 || all.length > 8) {
+    throw new Error('Add 1 to 8 players')
   }
-  if (new Set([...sideA, ...sideB]).size !== sideA.length + sideB.length) {
-    throw new Error('A player cannot be on both sides')
-  }
+  if (new Set(all).size !== all.length) throw new Error('A player cannot be added twice')
 }
 
-export function frameDescription(tableName: string, seconds: number, losers: number): string {
-  const minutes = billableMinutes(seconds)
-  return `${tableName} · lost frame · ${minutes} min${losers > 1 ? ` (split ${losers} ways)` : ''}`
+/** Same text as end_frame in SQL: "Table 1 · lost frame · 20 min (split 2 ways)". */
+export function frameDescription(tableName: string, billing: 'loser' | 'split', minutes: number, payers: number): string {
+  return `${tableName} · ${billing === 'loser' ? 'lost frame' : 'played'} · ${formatMinutes(minutes)}${payers > 1 ? ` (split ${payers} ways)` : ''}`
+}
+
+/** "Cigarettes · Gold Flake" for grouped items. */
+export function itemDescription(product: { name: string; group_name: string | null }): string {
+  return product.group_name?.trim() ? `${product.group_name.trim()} · ${product.name}` : product.name
 }

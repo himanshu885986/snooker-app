@@ -44,6 +44,23 @@ When a new file appears in `supabase/migrations`, run **only that file** in the 
 |---|---|
 | `001_initial.sql` | Shops, tables, frames, bills, logins and roles |
 | `002_payments_khata.sql` | Part-payments, payment history, khata (customer credit) |
+| `003_games_item_groups.sql` | PlayStation and other hourly games; item groups (Cigarettes → Gold Flake, Classic) |
+
+## Tables, stations and games
+
+Each table or station has a type (Snooker, Pool, PlayStation, Table tennis, Carrom, Foosball, Other) and its own rules, set in **Settings → Tables & stations**:
+
+- **Rate** per minute (₹7/min) or per hour (₹100/hr). It is stored per hour, so both are exact.
+- **Blocks and minimum:** time is rounded to the nearest minute, then up to a whole block, and never below the minimum. For example, with 15-minute blocks and a 30-minute minimum, 10 minutes is charged as 30, and 47 minutes as 60.
+- **Who pays:**
+  - *Loser pays* (snooker, pool): two sides of 1–2 players, and the losing side pays.
+  - *Players split* (PlayStation etc.): 1–8 players. When the session ends, the players you tick share the cost; untick everyone but one if one person pays for all.
+
+A game that is running keeps the rules it started with, even if the rate is changed meanwhile.
+
+## Item groups
+
+Give items the same **group** (e.g. "Cigarettes") to show them as one tile on the bill with a choice of types (Gold Flake, Classic, Marlboro), each with its own price. The bill shows "Cigarettes · Gold Flake".
 
 ## Payments, history and khata
 

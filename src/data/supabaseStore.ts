@@ -140,7 +140,8 @@ export function createSupabaseStore(supabase: SupabaseClient): DataStore {
 
     async saveTable(table) {
       if (!table.name.trim()) throw new Error('Table name is required')
-      if (table.rate_paise_per_min <= 0) throw new Error('Rate must be more than ₹0')
+      if (!(table.rate_paise_per_hour > 0)) throw new Error('Rate must be more than ₹0')
+      if (!(table.block_minutes >= 1 && table.min_minutes >= 1)) throw new Error('Blocks and minimum must be at least 1 minute')
       check(await supabase.from('tables').upsert(table))
     },
 

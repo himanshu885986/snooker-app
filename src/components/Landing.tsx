@@ -11,7 +11,7 @@ interface LandingProps {
 }
 
 const features = [
-  { art: '/art/stopwatch.png', title: 'Live table timers', text: 'Start, pause for a power cut, end. Every table has its own rate, and the amount ticks up as they play.' },
+  { art: '/art/stopwatch.png', title: 'Live timers for every game', text: 'Snooker and pool per minute, PlayStation or table tennis per hour. Each table or station has its own rate, blocks and minimum.' },
   { art: '/art/trophy.png', title: 'Loser pays, automatically', text: 'Singles or doubles. Tap the side that lost and their share lands on each player’s bill, split to the paisa.' },
   { art: '/food/noodles.png', title: 'Food & drinks on the right bill', text: 'Maggi, chai, cold drinks, cigarettes — tap the item and it goes on the bill of the player who asked for it.' },
   { art: '/art/phone.png', title: 'UPI QR with the exact amount', text: 'Customers scan and pay from any UPI app, straight into your account. No payment gateway, no fees.' },
@@ -26,6 +26,7 @@ const faqs = [
   { q: 'Can regulars pay later?', a: 'Yes. Put the unpaid amount on their khata, found by mobile number. The Khata tab shows who owes what, and you record their payment when it comes in.' },
   { q: 'Do players need to install anything?', a: 'No. They just scan the UPI QR code on their bill to pay.' },
   { q: 'Can I change the rate per minute?', a: 'Yes, per table, whenever you like. A frame that is already running keeps the rate it started with.' },
+  { q: 'Does it work for PlayStation and other games?', a: 'Yes. Add a PlayStation, table tennis, carrom or any other station with a per-hour rate, a minimum and time blocks. The players who played share the bill, or one of them pays for all.' },
   { q: 'Is my shop’s data private?', a: 'Yes. Each business is kept separate, and staff only see the business they are added to.' },
 ]
 
@@ -50,7 +51,7 @@ export function Landing({ onLogin, onRegister }: LandingProps) {
         <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-8 sm:px-6 lg:grid-cols-[1.1fr_1fr] lg:pb-24 lg:pt-14">
           <div className="rise">
             <p className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-brass-200 ring-1 ring-inset ring-white/15">
-              <img src="/art/ball.png" alt="" className="h-4 w-4" /> For snooker &amp; pool parlours
+              <img src="/art/ball.png" alt="" className="h-4 w-4" /> For snooker, pool &amp; gaming parlours
             </p>
             <h1 className="text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
               Run your parlour<br />without the <span className="text-brass-300">notebook.</span>

@@ -1,13 +1,12 @@
 // Billing rules. Keep in sync with the SQL functions in supabase/migrations
 // (end_frame), which apply the same rules on the server.
 
+import type { RateRules, RateUnit } from '../data/types'
+
 export interface PauseSpan {
   paused_at: string
   resumed_at: string | null
 }
-
-/** Minimum minutes charged for a frame that was actually played. */
-export const MIN_BILLABLE_MINUTES = 1
 
 /** Playing time in whole seconds: wall-clock time minus paused time. An open pause counts up to `now`. */
 export function billableSeconds(startedAt: string, pauses: PauseSpan[], now: number, endedAt?: string | null): number {
@@ -21,13 +20,33 @@ export function billableSeconds(startedAt: string, pauses: PauseSpan[], now: num
   return Math.max(0, Math.floor((end - Date.parse(startedAt) - paused) / 1000))
 }
 
-/** Minutes charged: rounded to the nearest minute, like reading entry/exit times off a clock. */
-export function billableMinutes(seconds: number): number {
-  return Math.max(MIN_BILLABLE_MINUTES, Math.round(seconds / 60))
+/** Minutes played: seconds rounded to the nearest minute, like reading a clock. */
+export function playedMinutes(seconds: number): number {
+  return Math.round(seconds / 60)
 }
 
-export function frameAmount(seconds: number, ratePaisePerMin: number): number {
-  return billableMinutes(seconds) * ratePaisePerMin
+/** Minutes charged: rounded up to a whole block, and never less than the minimum (or 1). */
+export function billedMinutes(seconds: number, rules: Pick<RateRules, 'block_minutes' | 'min_minutes'> = { block_minutes: 1, min_minutes: 1 }): number {
+  const block = Math.max(1, rules.block_minutes)
+  return Math.max(1, rules.min_minutes, Math.ceil(playedMinutes(seconds) / block) * block)
+}
+
+export function frameAmount(seconds: number, rules: RateRules): number {
+  return Math.round(billedMinutes(seconds, rules) * rules.rate_paise_per_hour / 60)
+}
+
+export function formatMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m ? `${h} hr ${m} min` : `${h} hr`
+}
+
+/** "₹7/min" or "₹100/hr" */
+export function formatRate(rule: { rate_paise_per_hour: number; rate_unit: RateUnit }): string {
+  return rule.rate_unit === 'minute'
+    ? `${formatRupees(rule.rate_paise_per_hour / 60)}/min`
+    : `${formatRupees(rule.rate_paise_per_hour)}/hr`
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { billableMinutes, billableSeconds, formatRupees, frameAmount, parseRupees, splitAmount } from './billing'
+import { billableSeconds, billedMinutes, formatMinutes, formatRate, formatRupees, frameAmount, parseRupees, splitAmount } from './billing'
 
 const t = (min: number, sec = 0) => new Date(Date.UTC(2026, 0, 1, 16, min, sec)).toISOString()
 
@@ -23,20 +23,49 @@ describe('billableSeconds', () => {
   })
 })
 
-describe('billableMinutes', () => {
-  it('rounds to the nearest minute with a 1 minute minimum', () => {
-    expect(billableMinutes(0)).toBe(1)
-    expect(billableMinutes(89)).toBe(1)
-    expect(billableMinutes(90)).toBe(2)
-    expect(billableMinutes(20 * 60 + 29)).toBe(20)
-    expect(billableMinutes(20 * 60 + 30)).toBe(21)
+const perMinute = (rupees: number) => ({ rate_paise_per_hour: rupees * 6000, block_minutes: 1, min_minutes: 1 })
+
+describe('billedMinutes', () => {
+  it('per minute: rounds to the nearest minute with a 1 minute minimum', () => {
+    expect(billedMinutes(0)).toBe(1)
+    expect(billedMinutes(89)).toBe(1)
+    expect(billedMinutes(90)).toBe(2)
+    expect(billedMinutes(20 * 60 + 29)).toBe(20)
+    expect(billedMinutes(20 * 60 + 30)).toBe(21)
+  })
+
+  it('hourly stations: rounds up to whole blocks, never below the minimum', () => {
+    const ps = { block_minutes: 15, min_minutes: 30 }
+    expect(billedMinutes(10 * 60, ps)).toBe(30)
+    expect(billedMinutes(30 * 60, ps)).toBe(30)
+    expect(billedMinutes(31 * 60, ps)).toBe(45)
+    expect(billedMinutes(47 * 60, ps)).toBe(60)
+    expect(billedMinutes(60 * 60 + 20, ps)).toBe(60) // 20 seconds over rounds down to the minute first
   })
 })
 
 describe('frameAmount', () => {
-  it('charges minutes × table rate', () => {
-    expect(frameAmount(20 * 60, 700)).toBe(14000)
-    expect(frameAmount(15 * 60, 900)).toBe(13500)
+  it('per minute: minutes × rate', () => {
+    expect(frameAmount(20 * 60, perMinute(7))).toBe(14000)
+    expect(frameAmount(15 * 60, perMinute(9))).toBe(13500)
+  })
+
+  it('per hour: billed minutes × hourly rate ÷ 60, to the paisa', () => {
+    const ps = { rate_paise_per_hour: 10000, block_minutes: 15, min_minutes: 30 }
+    expect(frameAmount(47 * 60, ps)).toBe(10000)
+    expect(frameAmount(75 * 60, ps)).toBe(12500)
+    expect(frameAmount(50 * 60, { rate_paise_per_hour: 10000, block_minutes: 1, min_minutes: 1 })).toBe(8333)
+  })
+})
+
+describe('rates and durations', () => {
+  it('formats', () => {
+    expect(formatRate({ rate_paise_per_hour: 42000, rate_unit: 'minute' })).toBe('₹7/min')
+    expect(formatRate({ rate_paise_per_hour: 45000, rate_unit: 'minute' })).toBe('₹7.50/min')
+    expect(formatRate({ rate_paise_per_hour: 10000, rate_unit: 'hour' })).toBe('₹100/hr')
+    expect(formatMinutes(45)).toBe('45 min')
+    expect(formatMinutes(60)).toBe('1 hr')
+    expect(formatMinutes(90)).toBe('1 hr 30 min')
   })
 })
 

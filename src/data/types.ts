@@ -4,6 +4,18 @@ export type Side = 'A' | 'B'
 export type FrameStatus = 'running' | 'paused' | 'ended' | 'cancelled'
 export type PaymentMode = 'cash' | 'upi'
 export type Role = 'admin' | 'maintainer' | 'viewer'
+export type GameKind = 'snooker' | 'pool' | 'playstation' | 'tabletennis' | 'boardgame' | 'foosball' | 'other'
+/** loser = the losing side pays (sides A and B); split = the players who played share it. */
+export type Billing = 'loser' | 'split'
+export type RateUnit = 'minute' | 'hour'
+
+/** How time is charged. Stored per hour so both ₹7/min and ₹100/hr are exact. */
+export interface RateRules {
+  rate_paise_per_hour: number
+  /** Minutes are rounded up to a whole block (1 = per minute). */
+  block_minutes: number
+  min_minutes: number
+}
 
 /** A business using the app (one SaaS customer). It can have several shops (branches). */
 export interface Org {
@@ -48,11 +60,15 @@ export interface Branch {
   upi_name: string | null
 }
 
-export interface Table {
+/** A snooker/pool table, PlayStation, or any other station charged by time. */
+export interface Table extends RateRules {
   id: string
   branch_id: string
   name: string
-  rate_paise_per_min: number
+  kind: GameKind
+  billing: Billing
+  /** How the rate is shown and typed. */
+  rate_unit: RateUnit
   sort: number
   active: boolean
 }
@@ -62,6 +78,8 @@ export interface Product {
   branch_id: string
   name: string
   price_paise: number
+  /** Items with the same group show as one tile with a choice of types, e.g. Cigarettes → Gold Flake. */
+  group_name: string | null
   /** Picture id from src/lib/foodImages.ts; null = suggest from the name. */
   image: string | null
   active: boolean
@@ -80,13 +98,14 @@ export interface Visit {
   customer_id: string | null
 }
 
-export interface Frame {
+/** One timed game on a table or station (a frame, or a session on hourly stations). */
+export interface Frame extends RateRules {
   id: string
   branch_id: string
   table_id: string
   started_at: string
   ended_at: string | null
-  rate_paise_per_min: number
+  billing: Billing
   status: FrameStatus
   losing_side: Side | null
   billable_seconds: number | null
@@ -97,7 +116,8 @@ export interface Frame {
 export interface FramePlayer {
   frame_id: string
   visit_id: string
-  side: Side
+  /** null in split sessions. */
+  side: Side | null
 }
 
 export interface FramePause {
@@ -207,12 +227,14 @@ export interface DataStore {
   subscribe(onChange: () => void): () => void
 
   openVisit(branchId: string, player: NewPlayer): Promise<string>
+  /** Loser-pays tables: two sides. Split stations: all players in sideA, sideB empty. */
   startFrame(tableId: string, sideA: string[], sideB: string[]): Promise<void>
   pauseFrame(frameId: string): Promise<void>
   resumeFrame(frameId: string): Promise<void>
   /** Admin: set how long a live frame has been played. */
   adjustFrameTime(frameId: string, playedSeconds: number): Promise<void>
-  endFrame(frameId: string, losingSide: Side): Promise<void>
+  /** Loser-pays: the losing side pays. Split: `payers` share it (default: everyone who played). */
+  endFrame(frameId: string, losingSide: Side | null, payers?: string[]): Promise<void>
   cancelFrame(frameId: string): Promise<void>
   addItem(visitId: string, productId: string, quantity: number): Promise<void>
   removeItem(chargeId: string): Promise<void>

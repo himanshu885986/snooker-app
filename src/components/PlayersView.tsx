@@ -4,7 +4,7 @@ import { useCounter } from '../counter'
 import { formatRupees, parseRupees, upiLink, visitTotals } from '../lib/billing'
 import { normalizePhone } from '../lib/permissions'
 import { foodImageUrl, productImageId } from '../lib/foodImages'
-import type { Charge, OpenVisit, PaymentMode } from '../data/types'
+import type { Charge, OpenVisit, PaymentMode, Product } from '../data/types'
 import { HistoryView } from './HistoryView'
 import { Icon } from './icons'
 import { PhoneInput } from './Login'
@@ -63,7 +63,8 @@ function OpenBills() {
         {state.openVisits.map((v) => {
           const table = tableOf.get(v.id)
           const items = v.charges.filter((c) => c.source === 'item').reduce((n, c) => n + c.quantity, 0)
-          const frames = v.charges.filter((c) => c.source === 'frame').length
+          const lost = v.charges.filter((c) => c.source === 'frame' && c.description.includes(' · lost frame · ')).length
+          const sessions = v.charges.filter((c) => c.source === 'frame').length - lost
           return (
             <li key={v.id}>
               <button onClick={() => setOpenId(v.id)}
@@ -74,7 +75,11 @@ function OpenBills() {
                   <span className="block truncate text-xs text-stone-500">
                     {table
                       ? <span className="font-semibold text-red-700">● Playing on {table}</span>
-                      : `${frames} lost ${frames === 1 ? 'frame' : 'frames'} · ${items} ${items === 1 ? 'item' : 'items'}`}
+                      : [
+                        lost > 0 && `${lost} lost ${lost === 1 ? 'frame' : 'frames'}`,
+                        sessions > 0 && `${sessions} ${sessions === 1 ? 'session' : 'sessions'}`,
+                        `${items} ${items === 1 ? 'item' : 'items'}`,
+                      ].filter(Boolean).join(' · ')}
                   </span>
                 </span>
                 <span className="text-right">
@@ -304,9 +309,9 @@ function billLines(charges: Charge[], products: { id: string; name: string; imag
   const items = new Map<string, BillLine>()
   for (const c of charges) {
     if (c.source === 'frame') {
-      // "Table 1 · lost frame · 20 min (split 2 ways)" → title + detail
-      const [table, , rest] = c.description.split(' · ')
-      lines.push({ key: c.id, title: `${table} · lost frame`, detail: rest ?? null, quantity: 1, amount: c.amount_paise, image: null, removeId: null })
+      // "Table 1 · lost frame · 20 min (split 2 ways)" or "PS5 1 · played · 1 hr" → title + detail
+      const [table, what, rest] = c.description.split(' · ')
+      lines.push({ key: c.id, title: what ? `${table} · ${what}` : table, detail: rest ?? null, quantity: 1, amount: c.amount_paise, image: null, removeId: null })
       continue
     }
     const unit = c.amount_paise / c.quantity
@@ -329,33 +334,90 @@ function billLines(charges: Charge[], products: { id: string; name: string; imag
   return lines
 }
 
+/** Shop items as tiles. Items sharing a group (e.g. Cigarettes) share one tile that opens their types. */
 function ItemPicker({ visitId }: { visitId: string }) {
   const { store, state, run, busy } = useCounter()
   const [added, setAdded] = useState<Record<string, number>>({})
+  const [group, setGroup] = useState<string | null>(null)
 
   if (state.products.length === 0) return <p className="text-stone-500">No products yet. The admin can add them in Settings.</p>
 
+  const add = async (productId: string) => {
+    if (await run(() => store.addItem(visitId, productId, 1))) setAdded((a) => ({ ...a, [productId]: (a[productId] ?? 0) + 1 }))
+  }
+
+  const groups = new Map<string, Product[]>()
+  const tiles: ({ kind: 'item'; product: Product } | { kind: 'group'; name: string })[] = []
+  for (const p of state.products) {
+    const g = p.group_name?.trim()
+    if (!g) { tiles.push({ kind: 'item', product: p }); continue }
+    if (!groups.has(g)) { groups.set(g, []); tiles.push({ kind: 'group', name: g }) }
+    groups.get(g)!.push(p)
+  }
+
+  if (group) {
+    const types = groups.get(group) ?? []
+    return (
+      <div>
+        <button onClick={() => setGroup(null)} className="mb-3 flex items-center gap-1 text-sm font-semibold text-felt-700">
+          <Icon name="arrowRight" className="h-4 w-4 rotate-180" /> All items
+        </button>
+        <p className="mb-2 flex items-center gap-2 text-lg font-extrabold">
+          <img src={foodImageUrl(productImageId({ name: group, image: types[0]?.image }))} alt="" className="h-8 w-8" /> {group}
+        </p>
+        <ul className="divide-y divide-stone-100 overflow-hidden rounded-2xl bg-white ring-1 ring-stone-900/5">
+          {types.map((p) => (
+            <li key={p.id}>
+              <button disabled={busy} onClick={() => add(p.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-felt-50 disabled:opacity-60">
+                <span className="flex-1 font-bold">{p.name}</span>
+                <span className="tabular text-sm font-semibold text-stone-500">{formatRupees(p.price_paise)}</span>
+                <span className={`grid h-8 min-w-8 place-items-center rounded-full px-2 text-sm font-bold ${added[p.id] ? 'bg-felt-700 text-white' : 'bg-chalk text-stone-500'}`}>
+                  {added[p.id] ? `+${added[p.id]}` : <Icon name="plus" className="h-4 w-4" />}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+
+  const tileClass = (on: boolean) => `relative flex flex-col items-center rounded-2xl bg-white p-3 text-center shadow-sm ring-1 transition active:scale-95 disabled:opacity-60 ${on ? 'ring-2 ring-felt-600' : 'ring-stone-900/5 hover:ring-felt-600/40'}`
   return (
     <div className="grid grid-cols-3 gap-2">
-      {state.products.map((p) => (
-        <button
-          key={p.id}
-          disabled={busy}
-          onClick={async () => {
-            if (await run(() => store.addItem(visitId, p.id, 1))) setAdded((a) => ({ ...a, [p.id]: (a[p.id] ?? 0) + 1 }))
-          }}
-          className={`relative flex flex-col items-center rounded-2xl bg-white p-3 text-center shadow-sm ring-1 transition active:scale-95 disabled:opacity-60 ${added[p.id] ? 'ring-2 ring-felt-600' : 'ring-stone-900/5 hover:ring-felt-600/40'}`}
-        >
-          <img src={foodImageUrl(productImageId(p))} alt="" className="h-14 w-14" loading="lazy" />
-          <span className="mt-1.5 line-clamp-2 text-sm font-bold leading-tight">{p.name}</span>
-          <span className="text-xs font-semibold text-stone-500">{formatRupees(p.price_paise)}</span>
-          {added[p.id] && (
-            <span className="absolute right-1.5 top-1.5 grid h-6 min-w-6 place-items-center rounded-full bg-felt-700 px-1.5 text-xs font-bold text-white">+{added[p.id]}</span>
-          )}
-        </button>
-      ))}
+      {tiles.map((tile) => {
+        if (tile.kind === 'item') {
+          const p = tile.product
+          return (
+            <button key={p.id} disabled={busy} onClick={() => add(p.id)} className={tileClass(!!added[p.id])}>
+              <img src={foodImageUrl(productImageId(p))} alt="" className="h-14 w-14" loading="lazy" />
+              <span className="mt-1.5 line-clamp-2 text-sm font-bold leading-tight">{p.name}</span>
+              <span className="text-xs font-semibold text-stone-500">{formatRupees(p.price_paise)}</span>
+              {added[p.id] && <Count n={added[p.id]} />}
+            </button>
+          )
+        }
+        const types = groups.get(tile.name)!
+        const prices = types.map((p) => p.price_paise)
+        const count = types.reduce((n, p) => n + (added[p.id] ?? 0), 0)
+        const from = Math.min(...prices)
+        return (
+          <button key={'g:' + tile.name} onClick={() => setGroup(tile.name)} className={tileClass(count > 0)}>
+            <img src={foodImageUrl(productImageId({ name: tile.name, image: types[0].image }))} alt="" className="h-14 w-14" loading="lazy" />
+            <span className="mt-1.5 line-clamp-2 text-sm font-bold leading-tight">{tile.name}</span>
+            <span className="text-xs font-semibold text-stone-500">
+              {types.length} types · {from === Math.max(...prices) ? formatRupees(from) : `from ${formatRupees(from)}`}
+            </span>
+            {count > 0 && <Count n={count} />}
+          </button>
+        )
+      })}
     </div>
   )
+}
+
+function Count({ n }: { n: number }) {
+  return <span className="absolute right-1.5 top-1.5 grid h-6 min-w-6 place-items-center rounded-full bg-felt-700 px-1.5 text-xs font-bold text-white">+{n}</span>
 }
 
 function UpiPanel({ amount, note }: { amount: number; note: string }) {

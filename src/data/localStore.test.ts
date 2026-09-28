@@ -42,7 +42,7 @@ describe('per-player billing', () => {
     const [amit, ravi, sonu, raj] = await players('Amit', 'Ravi', 'Sonu', 'Raj')
     const table1 = state.tables[0]
     const table3 = state.tables[2]
-    await store.saveTable({ ...table3, rate_paise_per_min: 900 })
+    await store.saveTable({ ...table3, rate_paise_per_hour: 900 * 60 })
 
     // Frame 1 on Table 1 (₹7/min), 2v2, 20 minutes, Amit + Ravi lose → ₹140 split 2 ways.
     await store.startFrame(table1.id, [amit, ravi], [sonu, raj])
@@ -105,7 +105,7 @@ describe('per-player billing', () => {
   it('uses the rate at the time the frame started, even if the table rate changes mid-frame', async () => {
     const [a, b] = await players('A', 'B')
     await store.startFrame(state.tables[0].id, [a], [b])
-    await store.saveTable({ ...state.tables[0], rate_paise_per_min: 1000 })
+    await store.saveTable({ ...state.tables[0], rate_paise_per_hour: 1000 * 60 })
     minutes(10)
     await reload()
     await store.endFrame(frameOn(0).id, 'A')
@@ -130,7 +130,7 @@ describe('rules', () => {
   it('blocks a second frame on a busy table and a player on two tables', async () => {
     const [a, b, c, d] = await players('A', 'B', 'C', 'D')
     await store.startFrame(state.tables[0].id, [a], [b])
-    await expect(store.startFrame(state.tables[0].id, [c], [d])).rejects.toThrow(/already has a frame/)
+    await expect(store.startFrame(state.tables[0].id, [c], [d])).rejects.toThrow(/already in use/)
     await expect(store.startFrame(state.tables[1].id, [a], [c])).rejects.toThrow(/already playing/)
   })
 
@@ -138,7 +138,7 @@ describe('rules', () => {
     const [a, b, c, d, e] = await players('A', 'B', 'C', 'D', 'E')
     await expect(store.startFrame(state.tables[0].id, [], [a])).rejects.toThrow(/1 or 2 players/)
     await expect(store.startFrame(state.tables[0].id, [a, b, c], [d])).rejects.toThrow(/1 or 2 players/)
-    await expect(store.startFrame(state.tables[0].id, [a], [a])).rejects.toThrow(/both sides/)
+    await expect(store.startFrame(state.tables[0].id, [a], [a])).rejects.toThrow(/added twice/)
     await store.startFrame(state.tables[0].id, [a, b], [e]) // 2 vs 1 is allowed
   })
 
@@ -255,7 +255,7 @@ describe('roles', () => {
     const item = state.openVisits.find((v) => v.id === a)!.charges.find((c) => c.source === 'item')!
     await expect(store.removeItem(item.id)).rejects.toThrow('Only the admin')
     await expect(store.checkout(a, 'cash')).rejects.toThrow('Only the admin')
-    await expect(store.saveTable({ ...state.tables[0], rate_paise_per_min: 100 })).rejects.toThrow('Only the admin')
+    await expect(store.saveTable({ ...state.tables[0], rate_paise_per_hour: 6000 })).rejects.toThrow('Only the admin')
     expect(state.members).toEqual([])
   })
 
@@ -394,5 +394,78 @@ describe('payments and khata', () => {
     await expect(store.loadHistory(state.branch.id, '2000-01-01', '2100-01-01')).rejects.toThrow('Only the admin')
     await expect(store.addKhata(orgId, state.branch.id, 'X', '9811111111', 100, '')).rejects.toThrow('Only the admin')
     expect(state.khata).toEqual([])
+  })
+})
+
+describe('hourly stations and item groups', () => {
+  async function addStation() {
+    await store.saveTable({
+      branch_id: state.branch.id, name: 'PS5 1', kind: 'playstation', billing: 'split', rate_unit: 'hour',
+      rate_paise_per_hour: 10000, block_minutes: 15, min_minutes: 30, sort: 9, active: true,
+    })
+    await reload()
+    return state.tables.find((t) => t.name === 'PS5 1')!
+  }
+
+  it('bills a PlayStation session per hour in blocks, split between everyone who played', async () => {
+    const ps = await addStation()
+    const [a, b, c] = await players('A', 'B', 'C')
+    await store.startFrame(ps.id, [a, b, c], [])
+    minutes(47) // → 60 min at ₹100/hr = ₹100
+    await reload()
+    const session = state.activeFrames.find((f) => f.table_id === ps.id)!
+    expect(session.players.every((p) => p.side === null)).toBe(true)
+    await store.endFrame(session.id, null)
+    await reload()
+    expect([bill(a), bill(b), bill(c)]).toEqual([3334, 3333, 3333])
+    expect(state.openVisits.find((v) => v.id === a)!.charges[0].description).toBe('PS5 1 · played · 1 hr (split 3 ways)')
+  })
+
+  it('charges the minimum, and one player can pay for everyone', async () => {
+    const ps = await addStation()
+    const [a, b] = await players('A', 'B')
+    await store.startFrame(ps.id, [a, b], [])
+    minutes(10) // → minimum 30 min = ₹50
+    await reload()
+    const session = state.activeFrames.find((f) => f.table_id === ps.id)!
+    await expect(store.endFrame(session.id, null, ['someone-else'])).rejects.toThrow('Payers must be players')
+    await store.endFrame(session.id, null, [b])
+    await reload()
+    expect(bill(a)).toBe(0)
+    expect(bill(b)).toBe(5000)
+  })
+
+  it('keeps loser-pays rules on snooker tables and validates player counts', async () => {
+    const ps = await addStation()
+    const players9 = await players('1', '2', '3', '4', '5', '6', '7', '8', '9')
+    await expect(store.startFrame(ps.id, players9, [])).rejects.toThrow('1 to 8 players')
+    await store.startFrame(state.tables[0].id, [players9[0]], [players9[1]])
+    await reload()
+    await expect(store.endFrame(frameOn(0).id, null)).rejects.toThrow('side that lost')
+  })
+
+  it('bills grouped items as "Group · Type"', async () => {
+    const [a] = await players('A')
+    const goldFlake = state.products.find((p) => p.name === 'Gold Flake')!
+    expect(goldFlake.group_name).toBe('Cigarettes')
+    await store.addItem(a, goldFlake.id, 2)
+    await reload()
+    const charge = state.openVisits.find((v) => v.id === a)!.charges[0]
+    expect([charge.description, charge.amount_paise]).toEqual(['Cigarettes · Gold Flake', 4000])
+  })
+})
+
+describe('older demo data', () => {
+  it('converts per-minute rates saved by earlier versions', async () => {
+    const storage = memoryStorage()
+    const old = createLocalStore(storage, () => clock)
+    const me = await old.auth.register('Old', 'Owner', '9876543210', '1234')
+    const raw = JSON.parse(storage.getItem('snooker-demo-db-v3')!)
+    raw.tables = raw.tables.map((t: Record<string, unknown>) => ({ id: t.id, branch_id: t.branch_id, name: t.name, rate_paise_per_min: 900, sort: t.sort, active: true }))
+    raw.products = raw.products.map(({ group_name: _g, ...p }: Record<string, unknown>) => p)
+    storage.setItem('snooker-demo-db-v3', JSON.stringify(raw))
+    const s = await old.load(me.memberships[0].org_id, null)
+    expect(s.tables[0]).toMatchObject({ kind: 'snooker', billing: 'loser', rate_paise_per_hour: 54000, rate_unit: 'minute', block_minutes: 1 })
+    expect(s.products[0].group_name).toBeNull()
   })
 })
