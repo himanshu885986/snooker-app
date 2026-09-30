@@ -11,6 +11,7 @@ import { createLocalStore } from './data/localStore'
 import { createSupabaseAuth } from './data/supabaseAuth'
 import { createPlatformApi, createSupabaseStore } from './data/supabaseStore'
 import type { Account, AuthApi, DataStore, PlatformApi } from './data/types'
+import { friendlyError, retryingFetch } from './lib/network'
 import { PlatformView } from './components/PlatformView'
 
 registerSW({ immediate: true })
@@ -20,7 +21,8 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
 function backend(): { store: DataStore; auth: AuthApi; platform?: PlatformApi } {
   if (url && key) {
-    const client = createClient(url, key)
+    // Reads retry on a dropped connection; see src/lib/network.ts.
+    const client = createClient(url, key, { global: { fetch: retryingFetch() } })
     return { store: createSupabaseStore(client), auth: createSupabaseAuth(client), platform: createPlatformApi(client) }
   }
   const store = createLocalStore(localStorage)
@@ -47,7 +49,7 @@ function Root() {
   }
 
   useEffect(() => {
-    auth.whoami().then(setAccount, (e: Error) => setError(e.message))
+    auth.whoami().then(setAccount, (e: Error) => setError(friendlyError(e)))
   }, [])
 
   const logout = async () => {

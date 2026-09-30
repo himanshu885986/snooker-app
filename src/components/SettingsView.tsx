@@ -11,6 +11,7 @@ import { PlatformView } from './PlatformView'
 import { PhoneInput, PinInput } from './Login'
 import { Icon } from './icons'
 import { Avatar, Button, Input, Modal, Select } from './ui'
+import { friendlyError } from '../lib/network'
 
 type StaffRole = Exclude<Role, 'admin'>
 
@@ -106,7 +107,7 @@ function ChangePin({ auth, onDone }: { auth: AuthApi; onDone: () => void }) {
           setOldPin('')
           setNewPin('')
         } catch (err) {
-          setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) })
+          setMessage({ ok: false, text: friendlyError(err) })
         } finally {
           setBusy(false)
         }

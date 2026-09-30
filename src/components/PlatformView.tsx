@@ -5,6 +5,7 @@ import { Icon, Wordmark } from './icons'
 import { formatDate, formatTime } from './money'
 import { daysLeft } from './Subscription'
 import { Avatar, Button, Input, Modal } from './ui'
+import { friendlyError } from '../lib/network'
 
 type View = 'payments' | 'businesses' | 'settings'
 
@@ -23,7 +24,7 @@ export function PlatformView({ platform, onClose }: { platform: PlatformApi; onC
       setBusinesses(b)
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyError(e))
     }
   }, [platform])
   useEffect(() => { void load() }, [load])
@@ -31,7 +32,7 @@ export function PlatformView({ platform, onClose }: { platform: PlatformApi; onC
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true)
     setError(null)
-    try { await fn(); await load(); return true } catch (e) { setError(e instanceof Error ? e.message : String(e)); return false } finally { setBusy(false) }
+    try { await fn(); await load(); return true } catch (e) { setError(friendlyError(e)); return false } finally { setBusy(false) }
   }
 
   const pending = payments?.filter((p) => p.status === 'pending') ?? []
@@ -175,7 +176,7 @@ function SettingsForm({ platform }: { platform: PlatformApi }) {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    platform.getSettings().then((x) => { setS(x); setPrice(String(x.price_paise / 100)) }, (e: Error) => setMessage({ ok: false, text: e.message }))
+    platform.getSettings().then((x) => { setS(x); setPrice(String(x.price_paise / 100)) }, (e: Error) => setMessage({ ok: false, text: friendlyError(e) }))
   }, [platform])
 
   if (!s) return <p className="py-6 text-center text-stone-500">{message?.text ?? 'Loading…'}</p>
@@ -194,7 +195,7 @@ function SettingsForm({ platform }: { platform: PlatformApi }) {
       await platform.updateSettings({ ...s!, price_paise: pricePaise! })
       setMessage({ ok: true, text: 'Saved.' })
     } catch (e) {
-      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) })
+      setMessage({ ok: false, text: friendlyError(e) })
     } finally {
       setBusy(false)
     }

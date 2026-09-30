@@ -3,6 +3,7 @@ import { isValidPin, normalizePhone } from '../lib/permissions'
 import type { Account, AuthApi } from '../data/types'
 import { Icon, Wordmark } from './icons'
 import { Button, Input } from './ui'
+import { friendlyError } from '../lib/network'
 
 export function PinInput(props: { value: string; onChange: (v: string) => void; placeholder?: string; autoComplete?: string }) {
   return (
@@ -65,7 +66,7 @@ export function AuthScreen({ auth, demo, initialMode = 'login', onBack, onLogged
         ? await auth.login(phone, pin)
         : await auth.register(business, name, phone, pin))
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyError(err))
     } finally {
       setBusy(false)
     }

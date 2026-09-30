@@ -7,6 +7,7 @@ import { Icon } from './icons'
 import { AmountInput, formatDate, formatTime, ModePicker } from './money'
 import { Avatar, Button, Input, Modal } from './ui'
 import { PhoneInput } from './Login'
+import { friendlyError } from '../lib/network'
 
 /** Admin: who owes the shop money, and each customer's ledger. */
 export function KhataView() {
@@ -82,7 +83,7 @@ function LedgerDialog({ customerId, onClose }: { customerId: string; onClose: ()
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState<PaymentMode>('cash')
 
-  const load = useCallback(() => store.loadKhata(customerId).then(setData, (e: Error) => setError(e.message)), [store, customerId])
+  const load = useCallback(() => store.loadKhata(customerId).then(setData, (e: Error) => setError(friendlyError(e))), [store, customerId])
   // Reload whenever shared state changes (a payment here or on another device).
   useEffect(() => { void load() }, [load, state])
 

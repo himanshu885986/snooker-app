@@ -6,6 +6,7 @@ import type { ClosedVisit, History } from '../data/types'
 import { Icon } from './icons'
 import { formatTime, MoneyBadge } from './money'
 import { Avatar, Button, Input, Modal } from './ui'
+import { friendlyError } from '../lib/network'
 
 /** Admin: bills closed on a day at this shop, with the day's cash / UPI / khata totals. */
 export function HistoryView() {
@@ -17,7 +18,7 @@ export function HistoryView() {
 
   const load = useCallback(() => {
     const { from, to } = dayRange(date)
-    return store.loadHistory(state.branch.id, from, to).then((h) => { setHistory(h); setError(null) }, (e: Error) => setError(e.message))
+    return store.loadHistory(state.branch.id, from, to).then((h) => { setHistory(h); setError(null) }, (e: Error) => setError(friendlyError(e)))
   }, [store, state.branch.id, date])
   // Reload when the day changes or anything changes (e.g. a bill closed on another device).
   useEffect(() => { void load() }, [load, state])

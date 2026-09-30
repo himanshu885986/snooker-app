@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CounterContext, makeCan, type Counter } from './counter'
 import type { Account, AuthApi, BranchState, DataStore, PlatformApi, Subscription } from './data/types'
 import { roleLabels } from './lib/permissions'
+import { friendlyError, isNetworkError } from './lib/network'
 import { TablesView } from './components/TablesView'
 import { PlayersView } from './components/PlayersView'
 import { SettingsView } from './components/SettingsView'
@@ -43,21 +44,51 @@ export function App({ store, account, auth, onLogout, platform }: AppProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  /** The last refresh failed because of the network; the screen may be out of date. */
+  const [offline, setOffline] = useState(false)
   const target = useRef({ orgId, branchId })
   target.current = { orgId, branchId }
 
-  const reload = useCallback(async () => {
-    try {
-      const { orgId, branchId } = target.current
-      // Check access first: an expired business can't load anything, and gets the payment screen.
-      const current = await store.subscription(orgId)
-      setSub(current)
-      if (current.state !== 'expired') setState(await store.load(orgId, branchId))
-      setLoadError(null)
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : String(e))
+  // One refresh at a time. Requests that arrive meanwhile (live updates, focus, actions)
+  // are merged into a single follow-up refresh instead of piling up in parallel.
+  const refresh = useRef<{ running: Promise<void> | null; again: boolean }>({ running: null, again: false })
+
+  const reload = useCallback((): Promise<void> => {
+    const r = refresh.current
+    if (r.running) {
+      r.again = true
+      return r.running
     }
+    const once = async () => {
+      try {
+        const { orgId, branchId } = target.current
+        // Check access first: an expired business can't load anything, and gets the payment screen.
+        const current = await store.subscription(orgId)
+        setSub(current)
+        if (current.state !== 'expired') setState(await store.load(orgId, branchId))
+        setLoadError(null)
+        setOffline(false)
+      } catch (e) {
+        if (isNetworkError(e)) setOffline(true)
+        setLoadError(friendlyError(e))
+      }
+    }
+    r.running = (async () => {
+      do {
+        r.again = false
+        await once()
+      } while (r.again)
+      r.running = null
+    })()
+    return r.running
   }, [store])
+
+  // While the last refresh failed, keep trying quietly.
+  useEffect(() => {
+    if (!offline) return
+    const timer = setInterval(() => void reload(), 5000)
+    return () => clearInterval(timer)
+  }, [offline, reload])
 
   useEffect(() => { void reload() }, [reload, orgId, branchId])
   useEffect(() => store.subscribe(() => void reload()), [store, reload])
@@ -79,14 +110,19 @@ export function App({ store, account, auth, onLogout, platform }: AppProps) {
     setError(null)
     try {
       await action()
-      await reload()
-      return true
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      return false
-    } finally {
+      setError(friendlyError(e))
+      // A dropped save may still have gone through: refresh so the screen shows what really happened.
+      if (isNetworkError(e)) void reload()
       setBusy(false)
+      return false
     }
+    // The action worked. Refreshing the screen can't make it fail; if the refresh drops,
+    // the "Reconnecting" strip shows and it retries by itself. On a slow connection, don't
+    // hold the buttons for more than ~2 seconds: the screen updates when the refresh lands.
+    await Promise.race([reload(), new Promise((resolve) => setTimeout(resolve, 2000))])
+    setBusy(false)
+    return true
   }, [reload])
 
   const counter = useMemo<Counter | null>(
@@ -166,6 +202,13 @@ export function App({ store, account, auth, onLogout, platform }: AppProps) {
           </div>
         </header>
 
+        {offline && (
+          <div className="px-3 pt-3">
+            <p className="mx-auto flex max-w-6xl items-center gap-2 rounded-2xl bg-stone-800 px-4 py-2.5 text-sm font-medium text-white">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-amber-400" /> Reconnecting… the screen may be a little out of date.
+            </p>
+          </div>
+        )}
         {sub && <SubscriptionBanner sub={sub} onPay={() => setPaying(true)} />}
         {paying && sub && (
           <Modal title="Pay subscription" onClose={() => setPaying(false)}>

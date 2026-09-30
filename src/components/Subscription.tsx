@@ -5,6 +5,7 @@ import type { Account, DataStore, Subscription } from '../data/types'
 import { Icon, Wordmark } from './icons'
 import { formatDate } from './money'
 import { Button, Input } from './ui'
+import { friendlyError } from '../lib/network'
 
 const DAY = 86_400_000
 const MONTH_CHOICES = [1, 3, 6, 12]
@@ -84,7 +85,7 @@ export function PayPanel({ sub, orgName, store, orgId, onClaimed }: {
     try {
       onClaimed(await store.claimSubscriptionPayment(orgId, months, reference))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyError(e))
     } finally {
       setBusy(false)
     }
