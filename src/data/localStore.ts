@@ -13,7 +13,7 @@ import type {
 } from './types'
 
 type DemoMember = Member & { pin: string }
-type DemoCustomer = Pick<Customer, 'id' | 'org_id' | 'name' | 'phone'> & { created_at: string }
+type DemoCustomer = Pick<Customer, 'id' | 'org_id' | 'name' | 'phone'> & { created_at: string; erased_at?: string }
 
 /** Demo stand-in for the platform owner's settings (supabase/migrations/004_subscriptions.sql). */
 export const DEMO_PLATFORM = {
@@ -224,6 +224,31 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
 
     async logout() {
       storage.removeItem(SESSION_KEY)
+    },
+
+    async logoutEverywhere() {
+      storage.removeItem(SESSION_KEY)
+    },
+
+    async exportMyData() {
+      const db = read()
+      const m = me(db)
+      if (!m) throw new Error('Please log in again')
+      return {
+        exported_at: new Date(now()).toISOString(), name: m.name, phone: m.phone,
+        pin: 'Demo mode keeps the PIN in this browser only.', businesses: [{ business: db.org.name, role: m.role }],
+      }
+    },
+
+    async deleteAccount(pin) {
+      const db = read()
+      const m = me(db)
+      if (!m) throw new Error('Please log in again')
+      if (m.pin !== pin) throw new Error('PIN is wrong')
+      if (m.role === 'admin') throw new Error('You own a business. Delete the business first (Settings → Privacy & data), so it isn’t left without an owner.')
+      db.members = db.members.filter((x) => x.user_id !== m.user_id)
+      storage.removeItem(SESSION_KEY)
+      save(db)
     },
 
     async changePin(oldPin, newPin) {
@@ -625,6 +650,37 @@ export function createLocalStore(storage: KeyValueStorage, now: () => number = D
           mode: null, visit_id: null, note: note.trim() || null, created_at: at, voided_at: null,
         })
       })
+    },
+
+    eraseCustomer(_orgId, phone) {
+      return write('manage', (db, at) => {
+        const c = db.customers.find((x) => x.phone && x.phone === normalizePhone(phone))
+        if (!c) throw new Error('No customer with that mobile number')
+        const owed = balance(db, c.id)
+        if (owed !== 0) throw new Error(`They have ${formatRupees(Math.abs(owed))} on khata. Settle it first, then erase.`)
+        const name = c.name
+        for (const v of db.visits) if (v.customer_id === c.id) Object.assign(v, { player_name: 'Deleted customer', phone: null })
+        for (const e of db.khataEntries) if (e.customer_id === c.id) e.note = null
+        Object.assign(c, { name: 'Deleted customer', phone: null, erased_at: at })
+        return name
+      })
+    },
+
+    async deleteBusiness(_orgId, pin) {
+      const db = read()
+      const m = me(db)
+      if (!m || m.pin !== pin) throw new Error('PIN is wrong')
+      if (m.role !== 'admin') throw new Error('Only the admin can do this')
+      storage.removeItem(STORAGE_KEY)
+      storage.removeItem(SESSION_KEY)
+      listeners.forEach((l) => l())
+    },
+
+    async exportBusiness() {
+      const db = read()
+      if (roleOf(db) !== 'admin') throw new Error('Only the admin can do this')
+      const { members, ...rest } = db
+      return { exported_at: new Date(now()).toISOString(), ...rest, staff: members.map(({ pin: _pin, ...m }) => m) }
     },
 
     voidKhataEntry(entryId) {

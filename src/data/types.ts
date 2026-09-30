@@ -233,7 +233,8 @@ export interface Customer {
   id: string
   org_id: string
   name: string
-  phone: string
+  /** null once their personal data has been erased. */
+  phone: string | null
   /** Positive = they owe the shop. */
   balance_paise: number
   last_activity_at: string | null
@@ -338,6 +339,13 @@ export interface DataStore {
   addKhata(orgId: string, branchId: string, name: string, phone: string, amountPaise: number, note: string): Promise<void>
   voidKhataEntry(entryId: string): Promise<void>
 
+  /** Remove a customer's name and mobile number everywhere (amounts stay). Returns the erased name. */
+  eraseCustomer(orgId: string, phone: string): Promise<string>
+  /** Delete the whole business and all its data. Needs the owner's PIN. */
+  deleteBusiness(orgId: string, pin: string): Promise<void>
+  /** Everything stored about the business, as JSON (owner only). */
+  exportBusiness(orgId: string): Promise<unknown>
+
   saveBranch(branch: Omit<Branch, 'id'> & { id?: string }): Promise<void>
   saveTable(table: Omit<Table, 'id'> & { id?: string }): Promise<void>
   saveProduct(product: Omit<Product, 'id'> & { id?: string }): Promise<void>
@@ -356,4 +364,8 @@ export interface AuthApi {
   register(businessName: string, ownerName: string, phone: string, pin: string): Promise<Account>
   logout(): Promise<void>
   changePin(oldPin: string, newPin: string): Promise<void>
+  /** Log this person out on every device. */
+  logoutEverywhere(): Promise<void>
+  exportMyData(): Promise<unknown>
+  deleteAccount(pin: string): Promise<void>
 }

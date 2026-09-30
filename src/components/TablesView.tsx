@@ -19,6 +19,11 @@ const sideStyle: Record<Side, { chip: string; ring: string; solid: string; soft:
 const frameRate = (frame: ActiveFrame, table: Table) => formatRate({ rate_paise_per_hour: frame.rate_paise_per_hour, rate_unit: table.rate_unit })
 const capitalize = (s: string) => s[0].toUpperCase() + s.slice(1)
 
+/** Shown wherever a player's mobile number is asked for (DPDP: say why; no minors' numbers). */
+export function PhoneNote() {
+  return <p className="mt-2 text-xs text-stone-500">Mobile is optional: used only for this shop’s bills and khata. Don’t add numbers of under-18s.</p>
+}
+
 export function TablesView() {
   const { state } = useCounter()
   const [starting, setStarting] = useState<Table | null>(null)
@@ -243,6 +248,7 @@ function NewPlayerFields({ picker, children }: { picker: ReturnType<typeof usePl
         <Input placeholder="Phone (optional)" inputMode="tel" value={picker.newPhone} onChange={(e) => picker.setNewPhone(e.target.value)} />
         {children}
       </div>
+      <PhoneNote />
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { formatDuration, formatRupees } from '../lib/billing'
 import { foodImageUrl } from '../lib/foodImages'
 import { Icon, Wordmark } from './icons'
 import { Avatar, Button } from './ui'
+import { LegalLinks } from './Legal'
 
 interface LandingProps {
   onLogin: () => void
@@ -13,7 +14,7 @@ interface LandingProps {
 const features = [
   { art: '/art/stopwatch.png', title: 'Live timers for every game', text: 'Snooker and pool per minute, PlayStation or table tennis per hour. Each table or station has its own rate, blocks and minimum.' },
   { art: '/art/trophy.png', title: 'Loser pays, automatically', text: 'Singles or doubles. Tap the side that lost and their share lands on each player’s bill, split to the paisa.' },
-  { art: '/food/noodles.png', title: 'Food & drinks on the right bill', text: 'Maggi, chai, cold drinks, cigarettes — tap the item and it goes on the bill of the player who asked for it.' },
+  { art: '/food/noodles.png', title: 'Food & drinks on the right bill', text: 'Maggi, chai, cold drinks, snacks — tap the item and it goes on the bill of the player who asked for it.' },
   { art: '/art/phone.png', title: 'UPI QR with the exact amount', text: 'Customers scan and pay from any UPI app, straight into your account. No payment gateway, no fees.' },
   { art: '/art/people.png', title: 'Staff roles', text: 'You handle money and time changes. Staff run the tables. Viewers can only look. Everyone logs in with mobile + PIN.' },
   { art: '/art/shop.png', title: 'All your shops, one login', text: 'Run several branches from one account. Each shop keeps its own tables, rates, menu and bills.' },
@@ -31,7 +32,8 @@ const faqs = [
   { q: 'Is my shop’s data private?', a: 'Yes. Each business is kept separate, and staff only see the business they are added to.' },
 ]
 
-const menu = ['noodles', 'tea', 'soda', 'fries', 'sandwich', 'cigarette', 'water', 'coffee', 'dumpling', 'icecream', 'juice', 'chocolate']
+// No tobacco on the public site: COTPA 2003 bans tobacco advertising. Shops can still sell it in the app.
+const menu = ['noodles', 'tea', 'soda', 'fries', 'sandwich', 'popcorn', 'water', 'coffee', 'dumpling', 'icecream', 'juice', 'chocolate']
 
 export function Landing({ onLogin, onRegister }: LandingProps) {
   return (
@@ -199,6 +201,7 @@ export function Landing({ onLogin, onRegister }: LandingProps) {
           <span>Made for snooker parlours in India · © {new Date().getFullYear()}</span>
           <button className="font-semibold text-felt-700 hover:underline" onClick={onLogin}>Staff log in</button>
         </div>
+        <LegalLinks className="mx-auto mt-4 max-w-6xl text-sm text-stone-500" />
       </footer>
     </div>
   )

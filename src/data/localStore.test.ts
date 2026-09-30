@@ -506,3 +506,36 @@ describe('subscription', () => {
     expect((await store.subscription(orgId)).role).toBe('maintainer')
   })
 })
+
+describe('privacy and data rights', () => {
+  it('erases a customer once nothing is owed; amounts stay', async () => {
+    const amit = await store.openVisit(state.branch.id, { player_name: 'Amit', phone: '9811111111' })
+    await reload()
+    await store.addItem(amit, state.products.find((p) => p.name === 'Maggi')!.id, 1)
+    await store.closeToKhata(amit, 'Amit', '9811111111')
+    await expect(store.eraseCustomer(orgId, '9811111111')).rejects.toThrow('Settle it first')
+    await reload()
+    await store.receiveKhata(state.khata[0].id, state.branch.id, 4000, 'cash')
+    expect(await store.eraseCustomer(orgId, '+91 98111 11111')).toBe('Amit')
+    await expect(store.eraseCustomer(orgId, '9811111111')).rejects.toThrow('No customer')
+    const exported = await store.exportBusiness(orgId) as { visits: { player_name: string; phone: string | null }[]; staff: object[] }
+    expect(exported.visits[0]).toMatchObject({ player_name: 'Deleted customer', phone: null })
+    expect(JSON.stringify(exported)).not.toContain('"pin"')
+  })
+
+  it('staff can delete their own account; the owner must delete the business first', async () => {
+    await loginAsNew('maintainer')
+    await expect(store.exportBusiness(orgId)).rejects.toThrow('Only the admin')
+    await expect(store.auth.deleteAccount('0000')).rejects.toThrow('PIN is wrong')
+    expect(await store.auth.exportMyData()).toMatchObject({ name: 'maintainer', phone: '9111111111' })
+    await store.auth.deleteAccount('4321')
+    expect(await store.auth.whoami()).toBeNull()
+    await expect(store.auth.login('9111111111', '4321')).rejects.toThrow()
+
+    await store.auth.login('9876543210', '1234')
+    await expect(store.auth.deleteAccount('1234')).rejects.toThrow('Delete the business first')
+    await expect(store.deleteBusiness(orgId, '0000')).rejects.toThrow('PIN is wrong')
+    await store.deleteBusiness(orgId, '1234')
+    expect(await store.auth.whoami()).toBeNull()
+  })
+})

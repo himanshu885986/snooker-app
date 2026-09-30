@@ -141,6 +141,14 @@ export function createSupabaseStore(supabase: SupabaseClient): DataStore {
       rpc('add_khata', { p_org_id: orgId, p_branch_id: branchId, p_name: name, p_phone: phone, p_amount_paise: amountPaise, p_note: note }),
     voidKhataEntry: (entryId) => rpc('void_khata_entry', { p_entry_id: entryId }),
 
+    async eraseCustomer(orgId, phone) {
+      return check(await supabase.rpc('erase_customer', { p_org_id: orgId, p_phone: phone })) as string
+    },
+    deleteBusiness: (orgId, pin) => rpc('delete_business', { p_org_id: orgId, p_pin: pin }),
+    async exportBusiness(orgId) {
+      return check(await supabase.rpc('export_business', { p_org_id: orgId }))
+    },
+
     async saveBranch(branch) {
       if (!branch.name.trim()) throw new Error('Shop name is required')
       check(await supabase.from('branches').upsert(branch))

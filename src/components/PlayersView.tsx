@@ -6,6 +6,7 @@ import { normalizePhone } from '../lib/permissions'
 import { foodImageUrl, productImageId } from '../lib/foodImages'
 import type { Charge, OpenVisit, PaymentMode, Product } from '../data/types'
 import { HistoryView } from './HistoryView'
+import { PhoneNote } from './TablesView'
 import { Icon } from './icons'
 import { PhoneInput } from './Login'
 import { AmountInput, formatTime, MoneyBadge, ModePicker } from './money'
@@ -123,6 +124,7 @@ function AddPlayerDialog({ onClose }: { onClose: () => void }) {
       >
         <Input autoFocus placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
         <Input placeholder="Phone (optional)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <PhoneNote />
         <Button type="submit" disabled={busy || !name.trim()}>Open bill</Button>
       </form>
     </Modal>

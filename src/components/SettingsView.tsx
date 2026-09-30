@@ -8,6 +8,7 @@ import type { Account, AuthApi, Billing, GameKind, Member, PlatformApi, Product,
 import { daysLeft } from './Subscription'
 import { formatDate } from './money'
 import { PlatformView } from './PlatformView'
+import { LegalLinks } from './Legal'
 import { PhoneInput, PinInput } from './Login'
 import { Icon } from './icons'
 import { Avatar, Button, Input, Modal, Select } from './ui'
@@ -49,8 +50,10 @@ export function SettingsView(props: SettingsProps) {
             <p className="text-sm text-stone-600">Switch shops from the top bar. Each shop has its own tables, items and bills.</p>
             <AddShop onAdded={props.onBranchAdded} />
           </Section>
+          <PrivacySection onLogout={props.onLogout} />
         </>
       )}
+      <LegalLinks className="justify-center text-xs text-stone-500" />
       <p className="text-center text-xs text-stone-500">
         {store.mode === 'demo'
           ? 'Demo mode: data is saved only in this browser. Connect Supabase to go live.'
@@ -86,6 +89,7 @@ function AccountSection({ account, auth, onLogout, onSelectOrg }: SettingsProps)
       {changingPin
         ? <ChangePin auth={auth} onDone={() => setChangingPin(false)} />
         : <Button variant="ghost" className="justify-self-start px-0 text-sm underline" onClick={() => setChangingPin(true)}>Change my PIN</Button>}
+      <MyDataControls auth={auth} onLogout={onLogout} />
     </Section>
   )
 }
@@ -601,6 +605,136 @@ function PlatformSection({ platform }: { platform: PlatformApi }) {
           <PlatformView platform={platform} onClose={() => setOpen(false)} />
         </div>
       )}
+    </Section>
+  )
+}
+
+// ─── Privacy & data (DPDP Act rights) ────────────────────────────────────────
+
+/** Save data as a .json file on this device. */
+function downloadJson(filename: string, data: unknown) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+const today = () => new Date().toISOString().slice(0, 10)
+
+/** Pinned action with an inline "are you sure" step; runs `action` and shows its error, if any. */
+function useConfirmAction() {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const go = async (action: () => Promise<unknown>) => {
+    setBusy(true)
+    setError(null)
+    try { await action(); return true } catch (e) { setError(friendlyError(e)); return false } finally { setBusy(false) }
+  }
+  return { busy, error, go }
+}
+
+function MyDataControls({ auth, onLogout }: { auth: AuthApi; onLogout: () => void }) {
+  const [mode, setMode] = useState<'none' | 'logout' | 'delete'>('none')
+  const [pin, setPin] = useState('')
+  const { busy, error, go } = useConfirmAction()
+  return (
+    <div className="mt-1 grid grid-cols-1 gap-2 border-t border-stone-100 pt-3">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+        <button className="text-stone-600 underline" disabled={busy} onClick={() => go(async () => downloadJson(`playkhata-my-data-${today()}.json`, await auth.exportMyData()))}>Download my data</button>
+        <button className="text-stone-600 underline" onClick={() => setMode('logout')}>Log out all devices</button>
+        <button className="text-red-700 underline" onClick={() => setMode('delete')}>Delete my account</button>
+      </div>
+      {mode === 'logout' && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-amber-50 p-3 text-sm">
+          <span className="flex-1">Log out on every phone and tablet, including this one? Use this if a device was lost.</span>
+          <Button variant="secondary" onClick={() => setMode('none')}>Cancel</Button>
+          <Button variant="warning" disabled={busy} onClick={async () => { if (await go(() => auth.logoutEverywhere())) onLogout() }}>Log out everywhere</Button>
+        </div>
+      )}
+      {mode === 'delete' && (
+        <div className="grid grid-cols-1 gap-2 rounded-2xl bg-red-50 p-3 text-sm">
+          <p>Delete your PlayKhata account (your name, mobile and PIN). You’ll be removed from every business. This can’t be undone.</p>
+          <PinInput value={pin} onChange={setPin} placeholder="Your PIN to confirm" />
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="secondary" onClick={() => { setMode('none'); setPin('') }}>Cancel</Button>
+            <Button variant="danger" disabled={busy || !isValidPin(pin)} onClick={async () => { if (await go(() => auth.deleteAccount(pin))) onLogout() }}>Delete my account</Button>
+          </div>
+        </div>
+      )}
+      {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+    </div>
+  )
+}
+
+function PrivacySection({ onLogout }: { onLogout: () => void }) {
+  const { store, state } = useCounter()
+  const [phone, setPhone] = useState('')
+  const [erased, setErased] = useState<string | null>(null)
+  const [confirmErase, setConfirmErase] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [typedName, setTypedName] = useState('')
+  const [pin, setPin] = useState('')
+  const { busy, error, go } = useConfirmAction()
+  const orgId = state.org.id
+
+  return (
+    <Section title="Privacy & data" img="/art/lock.png" hint="Your customers’ data is yours to look after. These tools help you meet the DPDP Act.">
+      <div>
+        <p className="font-bold">Export all business data</p>
+        <p className="mb-2 text-sm text-stone-500">Every shop, table, bill, payment, customer and khata entry, as one file.</p>
+        <Button variant="secondary" disabled={busy}
+          onClick={() => go(async () => downloadJson(`playkhata-${state.org.name.replace(/\W+/g, '-').toLowerCase()}-${today()}.json`, await store.exportBusiness(orgId)))}>
+          Download data
+        </Button>
+      </div>
+
+      <div className="border-t border-stone-100 pt-3">
+        <p className="font-bold">Erase a customer’s personal data</p>
+        <p className="mb-2 text-sm text-stone-500">When a customer asks, remove their name and mobile from every bill and the khata. Amounts stay, without the name. Not possible while they owe money.</p>
+        {erased && <p className="mb-2 rounded-xl bg-felt-50 p-3 text-sm text-felt-800">Erased {erased}’s personal data.</p>}
+        {confirmErase ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-red-50 p-3 text-sm">
+            <span className="flex-1">Erase the customer with mobile {normalizePhone(phone)}? This can’t be undone.</span>
+            <Button variant="secondary" onClick={() => setConfirmErase(false)}>Cancel</Button>
+            <Button variant="danger" disabled={busy} onClick={async () => {
+              let name = ''
+              if (await go(async () => { name = await store.eraseCustomer(orgId, phone) })) { setErased(name); setPhone(''); setConfirmErase(false) }
+            }}>Erase</Button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <PhoneInput value={phone} onChange={(v) => { setPhone(v); setErased(null) }} placeholder="Customer’s mobile number" />
+            <Button variant="secondary" className="shrink-0" disabled={!normalizePhone(phone)} onClick={() => setConfirmErase(true)}>Erase…</Button>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-stone-100 pt-3">
+        <p className="font-bold text-red-800">Delete this business</p>
+        <p className="mb-2 text-sm text-stone-500">Deletes {state.org.name} and everything in it (all shops, bills, khata, staff access). Download your data first if you need it.</p>
+        {deleting ? (
+          <div className="grid grid-cols-1 gap-2 rounded-2xl bg-red-50 p-3 text-sm">
+            <label>Type <b>{state.org.name}</b> to confirm
+              <Input className="mt-1" value={typedName} onChange={(e) => setTypedName(e.target.value)} />
+            </label>
+            <PinInput value={pin} onChange={setPin} placeholder="Your PIN" />
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => { setDeleting(false); setTypedName(''); setPin('') }}>Cancel</Button>
+              <Button variant="danger" disabled={busy || typedName.trim() !== state.org.name || !isValidPin(pin)}
+                onClick={async () => { if (await go(() => store.deleteBusiness(orgId, pin))) onLogout() }}>
+                Delete forever
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="ghost" className="text-red-700" onClick={() => setDeleting(true)}>Delete business…</Button>
+        )}
+      </div>
+      {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}
     </Section>
   )
 }

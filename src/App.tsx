@@ -83,6 +83,16 @@ export function App({ store, account, auth, onLogout, platform }: AppProps) {
     return r.running
   }, [store])
 
+  // Logins expire after 30 idle days. Checking in now and then keeps a device that is in use
+  // logged in; if this login has expired (or was logged out elsewhere), go to the login screen.
+  const logoutRef = useRef(onLogout)
+  logoutRef.current = onLogout
+  useEffect(() => {
+    const check = () => auth.whoami().then((me) => { if (!me) logoutRef.current() }, () => { /* offline: try later */ })
+    const timer = setInterval(check, 6 * 3600_000)
+    return () => clearInterval(timer)
+  }, [auth])
+
   // While the last refresh failed, keep trying quietly.
   useEffect(() => {
     if (!offline) return

@@ -3,6 +3,7 @@ import { isValidPin, normalizePhone } from '../lib/permissions'
 import type { Account, AuthApi } from '../data/types'
 import { Icon, Wordmark } from './icons'
 import { Button, Input } from './ui'
+import { LegalLinks } from './Legal'
 import { friendlyError } from '../lib/network'
 
 export function PinInput(props: { value: string; onChange: (v: string) => void; placeholder?: string; autoComplete?: string }) {
@@ -51,11 +52,12 @@ export function AuthScreen({ auth, demo, initialMode = 'login', onBack, onLogged
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [agreed, setAgreed] = useState(false)
 
   const phoneOk = normalizePhone(phone) !== null
   const canSubmit = mode === 'login'
     ? phoneOk && isValidPin(pin)
-    : phoneOk && isValidPin(pin) && pin === pin2 && business.trim() !== '' && name.trim() !== ''
+    : phoneOk && isValidPin(pin) && pin === pin2 && business.trim() !== '' && name.trim() !== '' && agreed
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -135,6 +137,16 @@ export function AuthScreen({ auth, demo, initialMode = 'login', onBack, onLogged
             placeholder={mode === 'login' ? 'PIN' : 'Choose a PIN (4–6 digits)'} />
           {mode === 'register' && <PinInput value={pin2} onChange={setPin2} autoComplete="new-password" placeholder="Repeat PIN" />}
           {mode === 'register' && pin2 !== '' && pin !== pin2 && <p className="text-sm text-amber-700">PINs don’t match</p>}
+          {mode === 'register' && (
+            <label className="flex items-start gap-2.5 text-sm text-stone-600">
+              <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-felt-700" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+              <span>
+                I agree to the <a href="/terms" target="_blank" className="font-semibold text-felt-700 underline">Terms</a> and
+                {' '}<a href="/privacy" target="_blank" className="font-semibold text-felt-700 underline">Privacy Policy</a>, including
+                looking after my customers’ data as described there.
+              </span>
+            </label>
+          )}
 
           {error && (
             <p role="alert" className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-800">
@@ -146,6 +158,7 @@ export function AuthScreen({ auth, demo, initialMode = 'login', onBack, onLogged
             {!busy && <Icon name="arrowRight" className="h-4 w-4" />}
           </Button>
           <p className="text-center text-xs text-stone-500 lg:hidden">Staff: ask your shop admin to add your mobile number.</p>
+          <LegalLinks className="justify-center text-xs text-stone-500" />
         </form>
       </main>
     </div>

@@ -47,6 +47,7 @@ When a new file appears in `supabase/migrations`, run **only that file** in the 
 | `003_games_item_groups.sql` | PlayStation and other hourly games; item groups (Cigarettes → Gold Flake, Classic) |
 | `004_subscriptions.sql` | 7-day trial, monthly fee per shop paid by UPI to the platform owner, blocking when unpaid |
 | `005_fix_platform_settings_update.sql` | Fix saving Price & UPI in the platform dashboard |
+| `006_privacy.sql` | Data rights (erase a customer, delete business or account, exports), logins that expire after 30 idle days, automatic clean-up of old personal data |
 
 ## Subscriptions (charging shops for the app)
 
@@ -62,6 +63,35 @@ When a new file appears in `supabase/migrations`, run **only that file** in the 
    insert into platform_admins (user_id) select id from app_users where phone = '9XXXXXXXXX';
    ```
 3. Log in again, then open **Settings → Platform owner → Open platform dashboard**. Set your UPI ID, name and price per shop under **Price & UPI**. Approve payments under **Payments**, after checking your bank or UPI app. Use **Record payment** for cash or free days.
+
+## Privacy and legal (DPDP Act)
+
+- **Policy pages** at `/privacy`, `/terms`, `/refund` and `/contact`, linked from the landing page, login screen and Settings. New businesses must tick "I agree" when registering. The texts are plain-language drafts; **have a lawyer review them**.
+- **Your details** for those pages are in `src/lib/company.ts`: set `operator` to the legal name running PlayKhata (e.g. "Your Name (sole proprietor), trading as PlayKhata"), the grievance officer, and the city for the courts clause.
+- **support@playkhata.com**: in Cloudflare, open playkhata.com → **Email → Email Routing**, turn it on, and add a rule forwarding `support@` to your own inbox. It's free, and replies come from your inbox.
+- **In the app:**
+  - *Settings → My account:* Download my data, Log out all devices, Delete my account.
+  - *Settings → Privacy & data (owners):* Export all business data, Erase a customer's personal data (by mobile), Delete this business.
+- **Retention:** bills older than 2 years lose names and numbers; customers idle for 2 years with nothing owed are erased; logins expire after 30 idle days. The clean-up runs in the nightly job below.
+- **No tobacco on the public site** (COTPA 2003). Shops can still sell and bill it inside the app.
+
+## Nightly backup and clean-up
+
+`.github/workflows/nightly.yml` runs every night at 02:00 IST on GitHub (free). It saves an encrypted database backup, kept for 30 days, then runs the clean-up. To set it up:
+
+1. Supabase → **Connect** (top of the dashboard) → **Session pooler**: copy the URI and put your database password in it. Use the *session pooler*, not the direct connection: GitHub's servers can't reach the direct one.
+2. GitHub → your repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   - `SUPABASE_DB_URL` = that URI
+   - `BACKUP_PASSPHRASE` = a long random passphrase. **Keep a copy somewhere safe**: without it the backups can't be opened.
+3. GitHub → **Actions → Nightly backup and data clean-up → Run workflow**, to check it works (green tick).
+
+Scheduled jobs pause if a repository has no activity for 60 days; GitHub emails you, and one click turns them back on.
+
+**Restoring a backup:** download it from the workflow run's *Artifacts*, then:
+```bash
+gpg -d playkhata-YYYY-MM-DD.sql.gz.gpg | gunzip > backup.sql   # asks for the passphrase
+psql "<connection URI of an empty Supabase project>" -f backup.sql
+```
 
 ## Tables, stations and games
 

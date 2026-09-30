@@ -19,7 +19,7 @@ export function KhataView() {
   const owing = state.khata.filter((c) => c.balance_paise > 0)
   const outstanding = owing.reduce((sum, c) => sum + c.balance_paise, 0)
   const q = search.trim().toLowerCase()
-  const shown = state.khata.filter((c) => !q || c.name.toLowerCase().includes(q) || c.phone.includes(q))
+  const shown = state.khata.filter((c) => !q || c.name.toLowerCase().includes(q) || (c.phone ?? "").includes(q))
 
   return (
     <div className="mx-auto max-w-4xl p-3 sm:p-4">

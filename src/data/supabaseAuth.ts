@@ -36,5 +36,8 @@ export function createSupabaseAuth(supabase: SupabaseClient): AuthApi {
     logout: () => call<void>('pin_logout'),
 
     changePin: (oldPin, newPin) => call<void>('change_my_pin', { p_old_pin: oldPin, p_new_pin: newPin }),
+    logoutEverywhere: () => call<void>('logout_everywhere'),
+    exportMyData: () => call<unknown>('export_my_data'),
+    deleteAccount: (pin) => call<void>('delete_my_account', { p_pin: pin }),
   }
 }

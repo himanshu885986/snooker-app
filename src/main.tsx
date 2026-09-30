@@ -13,6 +13,7 @@ import { createPlatformApi, createSupabaseStore } from './data/supabaseStore'
 import type { Account, AuthApi, DataStore, PlatformApi } from './data/types'
 import { friendlyError, retryingFetch } from './lib/network'
 import { PlatformView } from './components/PlatformView'
+import { LegalView, legalPageFromPath, legalTitles } from './components/Legal'
 
 registerSW({ immediate: true })
 
@@ -102,8 +103,12 @@ function Root() {
   return <App store={store} account={account} auth={auth} onLogout={logout} platform={platformApi} />
 }
 
+// /privacy, /terms, /refund and /contact are readable without logging in.
+const legalPage = legalPageFromPath(location.pathname)
+if (legalPage) document.title = `${legalTitles[legalPage]} · PlayKhata`
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Root />
+    {legalPage ? <LegalView page={legalPage} /> : <Root />}
   </StrictMode>,
 )
